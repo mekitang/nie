@@ -1698,13 +1698,12 @@ input:focus, textarea:focus, select:focus {
             <table class="student-table" id="student-table">
               <thead>
                 <tr>
-                  <th>이름</th>
+                  <th>이름 / 학교</th>
                   <th>아이디</th>
                   <th>학년</th>
-                  <th>학교</th>
-                  <th>이번달 완료</th>
-                  <th>마지막 접속</th>
-                  <th>계정 상태</th>
+                  <th>이번달 / 마지막접속</th>
+                  <th>상태 / 만료</th>
+                  <th style="text-align:center;">사용 ON/OFF</th>
                   <th>관리</th>
                 </tr>
               </thead>
@@ -1785,10 +1784,11 @@ input:focus, textarea:focus, select:focus {
               <h4>🤖 Claude AI API 설정</h4>
               <p>학생 글에 AI 피드백 기능을 사용하려면 Anthropic API 키가 필요합니다.<br>
               API 키는 <a href="https://console.anthropic.com" target="_blank" style="color:var(--primary);">console.anthropic.com</a>에서 발급받을 수 있습니다.</p>
-              <div style="display:flex; gap:8px;">
+              <div style="display:flex; gap:8px; align-items:center;">
                 <input type="password" id="api-key-input" placeholder="sk-ant-api...">
                 <button class="btn-primary" onclick="saveAPIKey()" style="white-space:nowrap;">저장</button>
               </div>
+              <div id="api-key-status" style="font-size:12px; margin-top:6px;"></div>
               <p style="font-size:12px; margin-top:8px; color:var(--text-light);">⚠️ API 키는 브라우저 로컬 저장소에만 저장됩니다.</p>
             </div>
 
@@ -2835,6 +2835,17 @@ function initAdminPage() {
   loadSubmissions();
   loadQuestionsAdmin();
   updateAdminStats();
+  // API 키 상태 표시
+  const savedKey = getAPIKey();
+  const statusEl = document.getElementById('api-key-status');
+  if (statusEl) {
+    if (savedKey && savedKey.startsWith('sk-ant-')) {
+      const masked = savedKey.slice(0, 14) + '••••••••' + savedKey.slice(-4);
+      statusEl.innerHTML = `<span style="color:var(--success); font-weight:700;">✅ API 키 저장됨:</span> <code>${masked}</code>`;
+    } else {
+      statusEl.innerHTML = `<span style="color:var(--danger); font-weight:700;">⚠️ API 키가 설정되지 않았습니다.</span> AI 기능을 사용하려면 아래에 입력해주세요.`;
+    }
+  }
 }
 
 function showAdminTab(tab) {
@@ -2851,27 +2862,81 @@ function loadStudents() {
   const users = DB.get('users') || [];
   const submissions = DB.get('submissions') || [];
   const tbody = document.getElementById('student-tbody');
+  if (!tbody) return;
+
+  // filter-student가 존재하면 옵션 채우기 (없어도 오류 안 남)
   const filterSelect = document.getElementById('filter-student');
-  filterSelect.innerHTML = '<option value="">전체 학생</option>';
+  if (filterSelect) {
+    filterSelect.innerHTML = '<option value="">전체 학생</option>' +
+      users.map(u => `<option value="${u.id}">${u.name}</option>`).join('');
+  }
+
+  if (!users.length) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:32px; color:var(--text-light);">등록된 학생이 없습니다</td></tr>`;
+    return;
+  }
 
   tbody.innerHTML = users.map(u => {
     const monthSubs = submissions.filter(s => s.userId === u.id && s.date?.startsWith(today().slice(0,7)) && s.completed).length;
-    const statusClass = u.status === 'active' ? 'status-active' : u.status === 'suspended' ? 'status-inactive' : 'status-suspended';
-    const statusText = u.status === 'active' ? '활성' : u.status === 'suspended' ? '정지' : '비활성';
-    filterSelect.innerHTML += `<option value="${u.id}">${u.name}</option>`;
+
+    // 만료일 계산
+    const created = new Date(u.createdAt || today());
+    const expire = new Date(created);
+    expire.setMonth(expire.getMonth() + (u.expireMonth || 1));
+    const isExpired = new Date() > expire;
+    const daysLeft = Math.ceil((expire - new Date()) / (1000*60*60*24));
+
+    const isActive = u.status === 'active' && !isExpired;
+
+    const statusBadge = isExpired
+      ? `<span class="status-badge" style="background:rgba(160,174,192,.2);color:#4A5568;">만료</span>`
+      : u.status === 'active'
+        ? `<span class="status-badge status-active">사용중</span>`
+        : `<span class="status-badge status-inactive">정지</span>`;
+
+    const expireInfo = isExpired
+      ? `<span style="color:var(--danger); font-size:11px; display:block;">만료됨</span>`
+      : `<span style="color:${daysLeft<=7?'var(--danger)':daysLeft<=14?'var(--warning)':'var(--text-light)'}; font-size:11px; display:block;">${daysLeft}일 남음</span>`;
+
+    // 온/오프 토글 스위치
+    const toggleSwitch = `
+      <label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
+        <div onclick="toggleStatus('${u.id}','${u.status === 'active' ? 'suspended' : 'active'}')"
+          style="
+            width:44px; height:24px; border-radius:12px;
+            background:${isActive ? 'var(--success)' : '#CBD5E0'};
+            position:relative; transition:.3s; cursor:pointer; flex-shrink:0;
+          ">
+          <div style="
+            position:absolute; top:3px;
+            left:${isActive ? '23px' : '3px'};
+            width:18px; height:18px; border-radius:50%;
+            background:white; transition:.3s;
+            box-shadow:0 1px 4px rgba(0,0,0,.25);
+          "></div>
+        </div>
+        <span style="font-size:12px; font-weight:700; color:${isActive?'var(--success)':'#A0AEC0'};">${isActive?'ON':'OFF'}</span>
+      </label>`;
+
     return `<tr>
-      <td><strong>${u.name}</strong></td>
+      <td>
+        <strong>${u.name}</strong>
+        <div style="font-size:11px; color:var(--text-light);">${u.school || ''}</div>
+      </td>
       <td><code style="font-size:12px;">${u.id}</code></td>
       <td>${u.grade}학년</td>
-      <td>${u.school || '-'}</td>
-      <td><strong style="color:var(--primary);">${monthSubs}일</strong></td>
-      <td>${u.lastLogin ? formatDate(u.lastLogin) : '없음'}</td>
-      <td><span class="status-badge ${statusClass}">${statusText}</span></td>
       <td>
-        <button class="action-btn edit" onclick="editStudent('${u.id}')">수정</button>
-        ${u.status === 'active' 
-          ? `<button class="action-btn suspend" onclick="toggleStatus('${u.id}','suspended')">정지</button>`
-          : `<button class="action-btn activate" onclick="toggleStatus('${u.id}','active')">활성화</button>`}
+        <strong style="color:var(--primary);">${monthSubs}일</strong>
+        <div style="font-size:11px; color:var(--text-light);">${u.lastLogin ? u.lastLogin : '미접속'}</div>
+      </td>
+      <td>
+        ${statusBadge}
+        ${expireInfo}
+      </td>
+      <td style="text-align:center;">${toggleSwitch}</td>
+      <td>
+        <button class="action-btn edit" onclick="editStudent('${u.id}')">✏️ 수정</button>
+        <button class="action-btn view" onclick="extendExpire('${u.id}')">📅 연장</button>
       </td>
     </tr>`;
   }).join('');
@@ -2941,9 +3006,44 @@ function saveStudent() {
 function toggleStatus(userId, newStatus) {
   const users = DB.get('users') || [];
   const idx = users.findIndex(u => u.id === userId);
-  if (idx >= 0) { users[idx].status = newStatus; DB.set('users', users); }
+  if (idx < 0) return;
+  users[idx].status = newStatus;
+  DB.set('users', users);
   loadStudents();
-  showToast(`계정이 ${newStatus === 'active' ? '활성화' : '정지'}되었습니다`, 'success');
+  const name = users[idx].name;
+  showToast(
+    newStatus === 'active'
+      ? `✅ ${name} 학생 계정을 활성화했습니다`
+      : `🔒 ${name} 학생 계정을 정지했습니다`,
+    newStatus === 'active' ? 'success' : 'error'
+  );
+}
+
+function extendExpire(userId) {
+  const users = DB.get('users') || [];
+  const idx = users.findIndex(u => u.id === userId);
+  if (idx < 0) return;
+  const months = prompt(`${users[idx].name} 학생의 사용 기간을 몇 개월 연장할까요? (숫자 입력)`, '1');
+  if (!months || isNaN(parseInt(months))) return;
+  const add = parseInt(months);
+
+  // 현재 만료일 기준으로 연장
+  const created = new Date(users[idx].createdAt || today());
+  const currentExpire = new Date(created);
+  currentExpire.setMonth(currentExpire.getMonth() + (users[idx].expireMonth || 1));
+
+  const base = currentExpire > new Date() ? currentExpire : new Date();
+  const newExpire = new Date(base);
+  newExpire.setMonth(newExpire.getMonth() + add);
+
+  // createdAt을 오늘로 갱신하고 expireMonth를 새 만료일까지의 개월 수로 재계산
+  users[idx].createdAt = today();
+  users[idx].expireMonth = Math.ceil((newExpire - new Date()) / (1000*60*60*24*30));
+  users[idx].status = 'active'; // 연장 시 자동 활성화
+
+  DB.set('users', users);
+  loadStudents();
+  showToast(`✅ ${users[idx].name} 학생 사용 기간이 ${add}개월 연장되었습니다`, 'success');
 }
 
 // ARTICLES ADMIN
@@ -3342,9 +3442,85 @@ function openAIComment(subId) {
 }
 
 // ── 글 분석 ──
-async function runAnalysis() {
+// ========================
+// 공통 Claude API 호출 함수
+// ========================
+async function callClaude({ system, userMsg, maxTokens = 800 }) {
   const apiKey = getAPIKey();
-  if (!apiKey) { showToast('API 키를 설정에서 먼저 입력해주세요', 'error'); return; }
+  if (!apiKey) {
+    showToast('❌ API 키가 없습니다. 관리자 → 설정에서 API 키를 먼저 입력해주세요.', 'error');
+    return null;
+  }
+
+  // API 키 기본 형식 검증
+  if (!apiKey.startsWith('sk-ant-')) {
+    showToast('❌ API 키 형식이 올바르지 않습니다. sk-ant-api... 형식이어야 합니다.', 'error');
+    return null;
+  }
+
+  let resp;
+  try {
+    resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: maxTokens,
+        system: system,
+        messages: [{ role: 'user', content: userMsg }]
+      })
+    });
+  } catch (networkErr) {
+    showToast('❌ 네트워크 오류: 인터넷 연결을 확인해주세요.', 'error');
+    console.error('Network error:', networkErr);
+    return null;
+  }
+
+  let data;
+  try {
+    data = await resp.json();
+  } catch (parseErr) {
+    showToast(`❌ 응답 파싱 오류 (HTTP ${resp.status})`, 'error');
+    return null;
+  }
+
+  // HTTP 오류 처리
+  if (!resp.ok) {
+    const errType = data?.error?.type || '';
+    const errMsg  = data?.error?.message || '';
+    if (resp.status === 401) {
+      showToast('❌ API 키 인증 실패: API 키를 다시 확인해주세요.', 'error');
+    } else if (resp.status === 429) {
+      showToast('❌ 요청 한도 초과: 잠시 후 다시 시도해주세요.', 'error');
+    } else if (resp.status === 400) {
+      showToast(`❌ 잘못된 요청: ${errMsg.slice(0, 60)}`, 'error');
+    } else if (resp.status === 529 || errType === 'overloaded_error') {
+      showToast('❌ 서버가 혼잡합니다. 잠시 후 다시 시도해주세요.', 'error');
+    } else {
+      showToast(`❌ API 오류 ${resp.status}: ${errMsg.slice(0, 60)}`, 'error');
+    }
+    console.error('Claude API error:', resp.status, data);
+    return null;
+  }
+
+  // 정상 응답에서 텍스트 추출
+  const text = data?.content?.[0]?.text;
+  if (!text) {
+    showToast('❌ AI가 빈 응답을 반환했습니다. 다시 시도해주세요.', 'error');
+    console.error('Empty response:', data);
+    return null;
+  }
+
+  return text;
+}
+
+// ── 글 분석 ──
+async function runAnalysis() {
   const submissions = DB.get('submissions') || [];
   const sub = submissions.find(s => s.id === currentCommentTarget);
   if (!sub) return;
@@ -3353,72 +3529,57 @@ async function runAnalysis() {
   if (!content.trim()) { showToast('분석할 글이 없습니다', 'error'); return; }
 
   showLoading(true);
+
+  const raw = await callClaude({
+    maxTokens: 1200,
+    system: `당신은 초등학교 ${sub.grade}학년 학생의 글쓰기를 분석하는 국어 교육 전문가입니다.
+학생의 글을 5가지 항목으로 분석해 주세요. 초등학생 수준에 맞는 쉬운 말로 써주세요.
+
+반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트나 마크다운 없이 JSON만 출력하세요:
+{"scores":{"내용충실도":0,"논리구조":0,"어휘표현":0,"문장완성도":0,"창의성":0},"잘한점":"","부족한점":"","개선방법":"","총평":""}
+
+각 점수는 1~10 사이 정수로 입력하세요.`,
+    userMsg: `학생: ${sub.userName} (${sub.grade}학년)\n\n글 내용:\n${content}`
+  });
+
+  showLoading(false);
+  if (!raw) return;
+
+  let result;
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1200,
-        system: `당신은 초등학교 ${sub.grade}학년 학생의 글쓰기를 분석하는 국어 교육 전문가입니다.
-학생의 글을 아래 5가지 항목으로 분석해 주세요. 각 항목은 10점 만점으로 점수를 매기고, 구체적인 이유와 개선 방법을 알려주세요. 초등학생 수준에 맞는 쉬운 말로 써주세요.
-
-반드시 다음 JSON 형식으로만 응답하세요 (다른 말 없이 JSON만):
-{
-  "scores": {
-    "내용충실도": 점수,
-    "논리구조": 점수,
-    "어휘표현": 점수,
-    "문장완성도": 점수,
-    "창의성": 점수
-  },
-  "잘한점": "구체적으로 잘한 점 2~3가지",
-  "부족한점": "구체적으로 부족한 점 2~3가지",
-  "개선방법": "단계별 개선 방법 2~3가지",
-  "총평": "전체적인 총평 (2~3문장, 초등학생에게 격려가 되도록)"
-}`,
-        messages: [{ role: 'user', content: `학생: ${sub.userName} (${sub.grade}학년)\n\n글 내용:\n${content}` }]
-      })
-    });
-    const data = await resp.json();
-    const raw = data.content?.[0]?.text || '{}';
-    let result;
-    try {
-      result = JSON.parse(raw.replace(/```json|```/g,'').trim());
-    } catch(e) {
-      document.getElementById('analysis-detail').textContent = raw;
-      document.getElementById('analysis-result').style.display = 'block';
-      document.getElementById('btn-apply-analysis').style.display = '';
-      showLoading(false); return;
-    }
-
-    // Score cards
-    const scoreColors = { 내용충실도:'var(--primary)', 논리구조:'var(--secondary)', 어휘표현:'var(--success)', 문장완성도:'var(--warning)', 창의성:'#9F7AEA' };
-    const sc = result.scores || {};
-    document.getElementById('score-cards').innerHTML = Object.entries(sc).map(([k,v]) =>
-      `<div class="score-card"><div class="sc-val" style="color:${scoreColors[k]||'var(--primary)'};">${v}<span style="font-size:14px;">/10</span></div><div class="sc-label">${k}</div></div>`
-    ).join('');
-
-    const detailText = [
-      result.잘한점 ? `✅ 잘한 점\n${result.잘한점}` : '',
-      result.부족한점 ? `\n⚠️ 부족한 점\n${result.부족한점}` : '',
-      result.개선방법 ? `\n💡 개선 방법\n${result.개선방법}` : '',
-      result.총평 ? `\n🌟 총평\n${result.총평}` : ''
-    ].filter(Boolean).join('\n');
-
-    document.getElementById('analysis-detail').textContent = detailText;
+    result = JSON.parse(raw.replace(/```json|```/g, '').trim());
+  } catch(e) {
+    // JSON 파싱 실패 시 텍스트 그대로 표시
+    document.getElementById('analysis-detail').textContent = raw;
     document.getElementById('analysis-result').style.display = 'block';
     document.getElementById('btn-apply-analysis').style.display = '';
-
-    // Auto-save analysis
     const idx = submissions.findIndex(s => s.id === currentCommentTarget);
-    if (idx >= 0) { submissions[idx].aiAnalysis = detailText; DB.set('submissions', submissions); }
-
-    showToast('글 분석이 완료되었습니다!', 'success');
-  } catch(e) {
-    showToast('분석 중 오류가 발생했습니다', 'error');
+    if (idx >= 0) { submissions[idx].aiAnalysis = raw; DB.set('submissions', submissions); }
+    showToast('글 분석 완료!', 'success');
+    return;
   }
-  showLoading(false);
+
+  // 점수 카드
+  const scoreColors = { 내용충실도:'var(--primary)', 논리구조:'var(--secondary)', 어휘표현:'var(--success)', 문장완성도:'var(--warning)', 창의성:'#9F7AEA' };
+  const sc = result.scores || {};
+  document.getElementById('score-cards').innerHTML = Object.entries(sc).map(([k, v]) =>
+    `<div class="score-card"><div class="sc-val" style="color:${scoreColors[k]||'var(--primary)'};">${v}<span style="font-size:14px;">/10</span></div><div class="sc-label">${k}</div></div>`
+  ).join('');
+
+  const detailText = [
+    result.잘한점   ? `✅ 잘한 점\n${result.잘한점}`   : '',
+    result.부족한점 ? `\n⚠️ 부족한 점\n${result.부족한점}` : '',
+    result.개선방법 ? `\n💡 개선 방법\n${result.개선방법}` : '',
+    result.총평     ? `\n🌟 총평\n${result.총평}`       : ''
+  ].filter(Boolean).join('\n');
+
+  document.getElementById('analysis-detail').textContent = detailText;
+  document.getElementById('analysis-result').style.display = 'block';
+  document.getElementById('btn-apply-analysis').style.display = '';
+
+  const idx = submissions.findIndex(s => s.id === currentCommentTarget);
+  if (idx >= 0) { submissions[idx].aiAnalysis = detailText; DB.set('submissions', submissions); }
+  showToast('글 분석이 완료되었습니다! ✅', 'success');
 }
 
 function saveAnalysisToFeedback() {
@@ -3431,8 +3592,6 @@ function saveAnalysisToFeedback() {
 
 // ── 논술 재구성 ──
 async function runRewrite() {
-  const apiKey = getAPIKey();
-  if (!apiKey) { showToast('API 키를 설정에서 먼저 입력해주세요', 'error'); return; }
   const submissions = DB.get('submissions') || [];
   const sub = submissions.find(s => s.id === currentCommentTarget);
   if (!sub) return;
@@ -3443,45 +3602,36 @@ async function runRewrite() {
   if (!content.trim()) { showToast('재구성할 글이 없습니다', 'error'); return; }
 
   showLoading(true);
-  try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: `당신은 초등학교 글쓰기 교육 전문가입니다.
+
+  const rewritten = await callClaude({
+    maxTokens: 1000,
+    system: `당신은 초등학교 글쓰기 교육 전문가입니다.
 학생이 쓴 글을 "${style}" 형식으로 재구성해 주세요.
 
 규칙:
 1. 학생이 쓴 내용(아이디어, 의견)을 최대한 살려주세요
-2. ${targetGrade}학년 수준에 맞는 어휘와 문장을 사용하세요
-3. 서론(주제 제시) - 본론(근거/설명) - 결론(마무리) 구조로 작성하세요
-4. 각 문단 앞에 [서론], [본론], [결론] 표시를 붙여주세요
-5. 재구성 후 마지막에 "💡 이렇게 바꾼 이유:" 를 붙여 2~3가지 개선 포인트를 간단히 설명해주세요
-6. 전체 길이는 200~350자 내외로 해주세요`,
-        messages: [{ role: 'user', content: `학생(${targetGrade}학년) 원문:\n${content}\n\n위 글을 ${style}으로 재구성해주세요.` }]
-      })
-    });
-    const data = await resp.json();
-    const rewritten = data.content?.[0]?.text || '재구성 실패';
-    document.getElementById('rewrite-text').textContent = rewritten;
-    document.getElementById('rewrite-result').style.display = 'block';
+2. 초등학교 ${targetGrade}학년 수준에 맞는 어휘와 문장을 사용하세요
+3. [서론] - [본론] - [결론] 구조로 작성하고 각 문단 앞에 표시를 붙여주세요
+4. 재구성 후 마지막에 "💡 이렇게 바꾼 이유:" 를 붙여 2~3가지 개선 포인트를 설명해주세요
+5. 전체 200~350자 내외로 작성해주세요`,
+    userMsg: `학생(${targetGrade}학년) 원문:\n${content}\n\n위 글을 ${style}으로 재구성해주세요.`
+  });
 
-    // Auto-save
-    const idx = submissions.findIndex(s => s.id === currentCommentTarget);
-    if (idx >= 0) { submissions[idx].aiRewrite = rewritten; DB.set('submissions', submissions); }
-
-    showToast('논술 재구성이 완료되었습니다!', 'success');
-  } catch(e) {
-    showToast('재구성 중 오류가 발생했습니다', 'error');
-  }
   showLoading(false);
+  if (!rewritten) return;
+
+  document.getElementById('rewrite-text').textContent = rewritten;
+  document.getElementById('rewrite-result').style.display = 'block';
+
+  const idx = submissions.findIndex(s => s.id === currentCommentTarget);
+  if (idx >= 0) { submissions[idx].aiRewrite = rewritten; DB.set('submissions', submissions); }
+  showToast('논술 재구성이 완료되었습니다! ✅', 'success');
 }
 
 function copyRewrite() {
   const text = document.getElementById('rewrite-text').textContent;
-  navigator.clipboard.writeText(text).then(() => showToast('복사되었습니다!', 'success'));
+  navigator.clipboard.writeText(text).then(() => showToast('복사되었습니다!', 'success'))
+    .catch(() => showToast('복사 실패 - 수동으로 선택해주세요', 'error'));
 }
 
 function applyRewriteToFeedback() {
@@ -3494,31 +3644,31 @@ function applyRewriteToFeedback() {
 
 // ── 기본 AI 피드백 ──
 async function generateBasicAIComment() {
-  const apiKey = getAPIKey();
-  if (!apiKey) { showToast('API 키를 설정에서 먼저 입력해주세요', 'error'); return; }
   const submissions = DB.get('submissions') || [];
   const sub = submissions.find(s => s.id === currentCommentTarget);
   if (!sub) return;
+
   const content = [sub.daily, sub.summary, sub.questions?.long].filter(Boolean).join('\n\n');
+  if (!content.trim()) { showToast('작성된 글이 없습니다', 'error'); return; }
+
   showLoading(true);
-  try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514', max_tokens: 500,
-        system: `초등학교 ${sub.grade}학년 NIE 글쓰기 지도 선생님입니다. 학생의 글에 따뜻하고 격려가 되는 피드백을 150~200자로 작성해주세요. 잘한 점과 개선점을 함께 언급해 주세요.`,
-        messages: [{ role: 'user', content: `${sub.userName} (${sub.grade}학년)\n\n${content}` }]
-      })
-    });
-    const data = await resp.json();
-    const comment = data.content?.[0]?.text || '';
-    document.getElementById('ai-saved-feedback').textContent = comment;
-    const idx = submissions.findIndex(s => s.id === currentCommentTarget);
-    if (idx >= 0) { submissions[idx].aiComment = comment; DB.set('submissions', submissions); }
-    showToast('AI 기본 피드백이 생성되었습니다!', 'success');
-  } catch(e) { showToast('생성 중 오류 발생', 'error'); }
+
+  const comment = await callClaude({
+    maxTokens: 500,
+    system: `초등학교 ${sub.grade}학년 NIE 글쓰기 지도 선생님입니다.
+학생의 글을 읽고 따뜻하고 격려가 되는 피드백을 150~200자로 작성해주세요.
+잘한 점을 먼저 칭찬하고, 구체적인 개선점을 함께 알려주세요.
+초등학생이 이해할 수 있는 쉬운 말로 써주세요.`,
+    userMsg: `학생: ${sub.userName} (${sub.grade}학년)\n\n${content}`
+  });
+
   showLoading(false);
+  if (!comment) return;
+
+  document.getElementById('ai-saved-feedback').textContent = comment;
+  const idx = submissions.findIndex(s => s.id === currentCommentTarget);
+  if (idx >= 0) { submissions[idx].aiComment = comment; DB.set('submissions', submissions); }
+  showToast('AI 기본 피드백이 생성되었습니다! ✅', 'success');
 }
 
 // 구버전 호환
@@ -3683,64 +3833,58 @@ function deleteQuestion(date) {
 }
 
 async function generateQuestionAI() {
-  const apiKey = getAPIKey();
-  if (!apiKey) { showToast('API 키를 먼저 설정해주세요', 'error'); return; }
   showLoading(true);
-  try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514', max_tokens: 300,
-        system: '초등학교 3-6학년 학생을 위한 NIE(신문활용교육) 프로그램의 오늘의 질문을 생성하세요. 일반적인 일기형식이 아닌 조금 고민이 필요한 질문을 1개 만들어주세요. JSON 형식으로만 응답하세요: {"text":"질문내용","sub":"보조설명"}',
-        messages: [{ role: 'user', content: '초등학생을 위한 생각하게 만드는 질문 1개를 만들어주세요.' }]
-      })
-    });
-    const data = await resp.json();
-    const text = data.content?.[0]?.text || '';
-    try {
-      const clean = text.replace(/```json|```/g, '').trim();
-      const q = JSON.parse(clean);
-      document.getElementById('q-text').value = q.text;
-      document.getElementById('q-sub').value = q.sub;
-    } catch(e) {
-      document.getElementById('q-text').value = text;
-    }
-  } catch(e) { showToast('AI 생성 중 오류 발생', 'error'); }
+  const text = await callClaude({
+    maxTokens: 300,
+    system: `초등학교 3~6학년 NIE(신문활용교육) 프로그램의 "오늘의 질문"을 1개 생성하세요.
+일반 일기형식이 아닌, 조금 고민이 필요한 질문이어야 합니다.
+마크다운이나 다른 텍스트 없이 아래 JSON만 출력하세요:
+{"text":"질문내용","sub":"보조설명(예: 이유도 함께 써보세요!)"}`,
+    userMsg: '초등학생이 깊이 생각하게 만드는 질문 1개를 만들어주세요.'
+  });
   showLoading(false);
+  if (!text) return;
+  try {
+    const q = JSON.parse(text.replace(/```json|```/g, '').trim());
+    document.getElementById('q-text').value = q.text || text;
+    document.getElementById('q-sub').value = q.sub || '';
+  } catch(e) {
+    document.getElementById('q-text').value = text;
+  }
 }
 
 async function generateQuestionsAI() {
-  const apiKey = getAPIKey();
-  if (!apiKey) { showToast('API 키를 먼저 설정해주세요', 'error'); return; }
-  const title = document.getElementById('a-title').value;
-  const summary = document.getElementById('a-summary').value;
+  const title = document.getElementById('a-title').value.trim();
+  const summary = document.getElementById('a-summary').value.trim();
   if (!title) { showToast('기사 제목을 먼저 입력해주세요', 'error'); return; }
   showLoading(true);
-  try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514', max_tokens: 3000,
-        system: 'NIE 교육용 문제를 생성합니다. 초등학교 3학년부터 6학년까지 난이도별로 각 학년에 맞는 객관식 7개, 주관식 3개, 서술형 1개를 만들어주세요. 반드시 순수 JSON만 반환하세요. 형식: {"grade3":{"multiple":[{"q":"질문","opts":["①","②","③","④"],"ans":0}],"short":[{"q":"질문","maxLen":20}],"long":{"q":"질문","minLen":100,"maxLen":300}},"grade4":...}',
-        messages: [{ role: 'user', content: `기사 제목: ${title}\n기사 요약: ${summary}\n\n위 기사를 바탕으로 NIE 문제를 생성해주세요.` }]
-      })
-    });
-    const data = await resp.json();
-    const text = data.content?.[0]?.text || '';
-    document.getElementById('a-questions').value = text.replace(/```json|```/g,'').trim();
-    showToast('AI가 문제를 생성했습니다!', 'success');
-  } catch(e) { showToast('AI 생성 중 오류 발생', 'error'); }
+  const text = await callClaude({
+    maxTokens: 3000,
+    system: `NIE 교육용 문제를 생성합니다.
+초등학교 3~6학년 난이도별로 각 학년마다 객관식 7개, 주관식 3개, 서술형 1개를 만들어주세요.
+반드시 순수 JSON만 반환하세요. 다른 텍스트 없이 JSON만 출력하세요.
+형식: {"grade3":{"multiple":[{"q":"질문","opts":["보기1","보기2","보기3","보기4"],"ans":0}],"short":[{"q":"질문","maxLen":20}],"long":{"q":"질문","minLen":100,"maxLen":300}},"grade4":{...},"grade5":{...},"grade6":{...}}`,
+    userMsg: `기사 제목: ${title}\n기사 요약: ${summary || '(요약 없음)'}\n\n위 기사를 바탕으로 NIE 문제를 생성해주세요.`
+  });
   showLoading(false);
+  if (!text) return;
+  document.getElementById('a-questions').value = text.replace(/```json|```/g, '').trim();
+  showToast('AI가 문제를 생성했습니다! ✅', 'success');
 }
 
 // SETTINGS
 function saveAPIKey() {
   const key = document.getElementById('api-key-input').value.trim();
-  if (!key) { showToast('API 키를 입력하세요', 'error'); return; }
+  if (!key) { showToast('❌ API 키를 입력하세요', 'error'); return; }
+  if (!key.startsWith('sk-ant-')) {
+    showToast('❌ 형식 오류: sk-ant-api... 형식으로 입력해주세요', 'error');
+    return;
+  }
   localStorage.setItem('nie_api_key', key);
-  showToast('API 키가 저장되었습니다', 'success');
+  const masked = key.slice(0, 14) + '••••••••' + key.slice(-4);
+  document.getElementById('api-key-input').placeholder = `저장됨: ${masked}`;
+  document.getElementById('api-key-input').value = '';
+  showToast('✅ API 키가 저장되었습니다!', 'success');
 }
 
 function saveSettings() {
