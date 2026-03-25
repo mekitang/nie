@@ -2023,6 +2023,9 @@ input:focus, textarea:focus, select:focus {
       </div>
     </div>
 
+    <!-- 디버그 박스 (오류 시 표시) -->
+    <div id="ai-debug-box" style="display:none; margin-top:12px; padding:10px 14px; border-radius:8px; border:2px solid; font-size:12px; font-family:monospace; white-space:pre-wrap; line-height:1.6;"></div>
+
     <!-- 저장 버튼 -->
     <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:20px; padding-top:16px; border-top:2px solid var(--border);">
       <button class="btn-outline" onclick="closeModal('modal-ai-comment')">닫기</button>
@@ -3445,23 +3448,37 @@ function openAIComment(subId) {
 // ========================
 // 공통 Claude API 호출 함수
 // ========================
+// 디버그 패널 표시
+function showAIDebug(msg, isError) {
+  const box = document.getElementById('ai-debug-box');
+  if (!box) return;
+  box.style.display = 'block';
+  box.style.background = isError ? 'rgba(252,129,129,.15)' : 'rgba(72,187,120,.12)';
+  box.style.borderColor = isError ? 'var(--danger)' : 'var(--success)';
+  box.textContent = '🔎 ' + msg;
+}
+
 async function callClaude({ system, userMsg, maxTokens = 800 }) {
   const apiKey = getAPIKey();
+
+  // 1. API 키 존재 여부
   if (!apiKey) {
-    showToast('❌ API 키가 없습니다. 관리자 → 설정에서 API 키를 먼저 입력해주세요.', 'error');
-    return null;
+    const m = 'API 키가 없습니다. 관리자 → 설정 탭에서 API 키를 입력하고 저장해 주세요.';
+    showToast('❌ ' + m, 'error'); showAIDebug(m, true); return null;
+  }
+  // 2. 형식 검증
+  if (!apiKey.startsWith('sk-ant-')) {
+    const m = 'API 키 형식 오류. sk-ant-api03-... 형식으로 Anthropic Console에서 복사해주세요.\n현재 입력값 앞부분: ' + apiKey.slice(0,20);
+    showToast('❌ API 키 형식 오류', 'error'); showAIDebug(m, true); return null;
   }
 
-  // API 키 기본 형식 검증
-  if (!apiKey.startsWith('sk-ant-')) {
-    showToast('❌ API 키 형식이 올바르지 않습니다. sk-ant-api... 형식이어야 합니다.', 'error');
-    return null;
-  }
+  showAIDebug('API 요청 전송 중... (모델: claude-sonnet-4-5)', false);
 
   let resp;
   try {
     resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      mode: 'cors',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
@@ -3469,53 +3486,52 @@ async function callClaude({ system, userMsg, maxTokens = 800 }) {
         'anthropic-dangerous-direct-browser-access': 'true'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5',
         max_tokens: maxTokens,
         system: system,
         messages: [{ role: 'user', content: userMsg }]
       })
     });
   } catch (networkErr) {
-    showToast('❌ 네트워크 오류: 인터넷 연결을 확인해주세요.', 'error');
-    console.error('Network error:', networkErr);
+    const m = 'CORS 또는 네트워크 오류:\n' + networkErr.message + '\n\n해결: GitHub Pages 또는 localhost에서 열어야 합니다.\nfile:// 경로에서 직접 열면 CORS가 차단됩니다.';
+    showToast('❌ 네트워크/CORS 오류', 'error'); showAIDebug(m, true);
+    console.error('[NIE] fetch error:', networkErr);
     return null;
   }
 
   let data;
   try {
     data = await resp.json();
-  } catch (parseErr) {
-    showToast(`❌ 응답 파싱 오류 (HTTP ${resp.status})`, 'error');
-    return null;
+  } catch (e) {
+    const m = '응답 파싱 실패 (HTTP ' + resp.status + ')\n' + e.message;
+    showToast('❌ 응답 파싱 오류', 'error'); showAIDebug(m, true); return null;
   }
 
-  // HTTP 오류 처리
+  console.log('[NIE] API response:', resp.status, JSON.stringify(data).slice(0,300));
+
   if (!resp.ok) {
-    const errType = data?.error?.type || '';
-    const errMsg  = data?.error?.message || '';
-    if (resp.status === 401) {
-      showToast('❌ API 키 인증 실패: API 키를 다시 확인해주세요.', 'error');
-    } else if (resp.status === 429) {
-      showToast('❌ 요청 한도 초과: 잠시 후 다시 시도해주세요.', 'error');
-    } else if (resp.status === 400) {
-      showToast(`❌ 잘못된 요청: ${errMsg.slice(0, 60)}`, 'error');
-    } else if (resp.status === 529 || errType === 'overloaded_error') {
-      showToast('❌ 서버가 혼잡합니다. 잠시 후 다시 시도해주세요.', 'error');
-    } else {
-      showToast(`❌ API 오류 ${resp.status}: ${errMsg.slice(0, 60)}`, 'error');
-    }
-    console.error('Claude API error:', resp.status, data);
+    const errType = (data && data.error && data.error.type) || '';
+    const errMsg  = (data && data.error && data.error.message) || JSON.stringify(data);
+    let m = '';
+    if (resp.status === 401) m = '인증 실패 (401): API 키가 잘못되었습니다.\nAnthropic Console에서 키를 다시 복사해 붙여넣기 해주세요.';
+    else if (resp.status === 403) m = '접근 거부 (403): CORS 차단이거나 권한 없음.\nGitHub Pages URL에서 실행 중인지 확인하세요.';
+    else if (resp.status === 429) m = '요청 한도 초과 (429): 잠시 후 다시 시도해주세요.';
+    else if (resp.status === 400) m = '잘못된 요청 (400):\n' + errMsg;
+    else if (resp.status === 529 || errType === 'overloaded_error') m = '서버 혼잡 (529): 잠시 후 다시 시도해주세요.';
+    else m = 'API 오류 (' + resp.status + '):\n' + errMsg;
+    showToast('❌ ' + m.split('\n')[0], 'error');
+    showAIDebug(m, true);
+    console.error('[NIE] API error:', resp.status, data);
     return null;
   }
 
-  // 정상 응답에서 텍스트 추출
-  const text = data?.content?.[0]?.text;
+  const text = data && data.content && data.content[0] && data.content[0].text;
   if (!text) {
-    showToast('❌ AI가 빈 응답을 반환했습니다. 다시 시도해주세요.', 'error');
-    console.error('Empty response:', data);
-    return null;
+    const m = '빈 응답 수신:\n' + JSON.stringify(data).slice(0,300);
+    showToast('❌ AI 빈 응답', 'error'); showAIDebug(m, true); return null;
   }
 
+  showAIDebug('✅ 응답 수신 완료 (' + text.length + '자)', false);
   return text;
 }
 
