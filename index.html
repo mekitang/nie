@@ -9,22 +9,30 @@
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
   import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
-  import { getFirestore, doc, setDoc, getDoc, collection, getDocs, query, orderBy, onSnapshot, updateDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+  import { getFirestore, doc, setDoc, getDoc, collection, getDocs, query, orderBy, onSnapshot, updateDoc, enableIndexedDbPersistence } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
   // ★★★ 여기에 Firebase 설정을 입력하세요 ★★★
   const firebaseConfig = {
-  apiKey: "AIzaSyBPw9X9qGiOuUWa9cdpYJloPGgUvRmNgew",
-  authDomain: "report-ai-2.firebaseapp.com",
-  databaseURL: "https://report-ai-2-default-rtdb.firebaseio.com",
-  projectId: "report-ai-2",
-  storageBucket: "report-ai-2.firebasestorage.app",
-  messagingSenderId: "495409002950",
-  appId: "1:495409002950:web:9aca756eddadeb76075ac7"
-};
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+  };
 
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const db = getFirestore(app);
+
+  // Firestore 오프라인 캐시 활성화 (IndexedDB 기반)
+  enableIndexedDbPersistence(db).catch(err => {
+    if (err.code === 'failed-precondition') {
+      console.warn('Firestore 오프라인 캐시: 탭이 여러 개 열려 있어 비활성화됨');
+    } else if (err.code === 'unimplemented') {
+      console.warn('Firestore 오프라인 캐시: 이 브라우저에서 지원되지 않음');
+    }
+  });
 
   window.__firebase = { auth, db, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, doc, setDoc, getDoc, collection, getDocs, query, orderBy, onSnapshot, updateDoc };
 </script>
@@ -558,6 +566,43 @@
 
   .save-dot.saving { background: var(--warning); animation: pulse .6s infinite; }
   .save-dot.saved { background: var(--success); }
+  .save-dot.offline { background: #f97316; animation: pulse 2s infinite; }
+  .save-dot.pending { background: #a855f7; animation: pulse 1s infinite; }
+
+  .offline-banner {
+    background: #fff7ed;
+    border-bottom: 2px solid #f97316;
+    color: #c2410c;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    padding: 7px 16px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .offline-banner.show { display: flex; }
+
+  .sync-banner {
+    background: #f0fdf4;
+    border-bottom: 2px solid #22c55e;
+    color: #15803d;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    padding: 7px 16px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .sync-banner.show { display: flex; animation: syncfadeout 3.5s forwards; }
+
+  @keyframes syncfadeout {
+    0%, 65% { opacity: 1; }
+    100% { opacity: 0; display: none; }
+  }
 
   @keyframes pulse {
     0%, 100% { opacity: 1; }
@@ -768,6 +813,8 @@
   .btn-tiny.pdf:hover { background: #dc2626; color: white; }
   .btn-tiny.doc { background: #dbeafe; color: #1d4ed8; }
   .btn-tiny.doc:hover { background: #1d4ed8; color: white; }
+  .btn-tiny.hwp { background: #d1fae5; color: #065f46; }
+  .btn-tiny.hwp:hover { background: #065f46; color: white; }
   .btn-tiny.view { background: var(--primary-pale); color: var(--primary); }
   .btn-tiny.view:hover { background: var(--primary); color: white; }
 
@@ -975,6 +1022,14 @@
       <button class="btn-sm" onclick="showEditProfile()">내 정보 수정</button>
       <button class="btn-sm danger" onclick="doLogout()">로그아웃</button>
     </div>
+  </div>
+  <!-- 오프라인 상태 배너 -->
+  <div class="offline-banner" id="offlineBanner">
+    🔴 오프라인 상태 — 작성 내용은 기기에 임시 저장되며, 인터넷 연결 시 자동으로 동기화됩니다.
+  </div>
+  <!-- 동기화 완료 배너 -->
+  <div class="sync-banner" id="syncBanner">
+    ✅ 인터넷에 연결되었습니다. 임시 저장된 내용이 서버에 동기화되었습니다.
   </div>
 
   <!-- Page Navigation Tabs -->
@@ -1230,6 +1285,7 @@
         <div class="download-btns">
           <button class="btn-download pdf" onclick="downloadPDF()">📄 PDF로 저장</button>
           <button class="btn-download doc" onclick="downloadDOC()">📝 DOC로 저장</button>
+          <button class="btn-download" onclick="downloadHWPX()" style="background:#059669;color:white;">📃 HWP(X)로 저장</button>
         </div>
       </div>
 
@@ -1340,8 +1396,9 @@
     <h2 id="adminViewTitle">학생 보고서 미리보기</h2>
     <div id="adminViewContent" style="max-height:60vh;overflow-y:auto;"></div>
     <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;">
-      <button class="btn-download pdf" id="adminDlPdf" style="flex:1;" onclick="">PDF 다운로드</button>
-      <button class="btn-download doc" id="adminDlDoc" style="flex:1;" onclick="">DOC 다운로드</button>
+      <button class="btn-download pdf" id="adminDlPdf" style="flex:1;">📄 PDF</button>
+      <button class="btn-download doc" id="adminDlDoc" style="flex:1;">📝 DOC</button>
+      <button class="btn-download" id="adminDlHwp" style="flex:1;background:#059669;color:white;">📃 HWP(X)</button>
       <button onclick="closeModal('adminViewModal')" style="flex:1;padding:12px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer;background:white;font-size:14px;font-family:inherit;">닫기</button>
     </div>
   </div>
@@ -1354,7 +1411,7 @@
 // ═══════════════════════════════════════════════════════
 //  CONFIG
 // ═══════════════════════════════════════════════════════
-const ADMIN_EMAIL = 'mekitang@kakao.com'; // ★ 관리자 이메일 변경
+const ADMIN_EMAIL = 'admin@school.kr'; // ★ 관리자 이메일 변경
 const TOTAL_PAGES = 6; // page0~page5 (실제 콘텐츠 페이지는 page0~page4 = 5개, preview=6번째)
 
 // ═══════════════════════════════════════════════════════
@@ -1514,6 +1571,7 @@ function showScreen(id) {
 function showAppScreen() {
   showScreen('appScreen');
   updateInfoBadges();
+  initNetworkMonitor();
   loadFormData();
 }
 
@@ -1695,7 +1753,94 @@ function showBookCover(src) {
 }
 
 // ═══════════════════════════════════════════════════════
-//  AUTO-SAVE
+//  NETWORK STATE & OFFLINE SUPPORT
+// ═══════════════════════════════════════════════════════
+let isOnline = navigator.onLine;
+const LS_KEY = () => currentUser ? `report_draft_${currentUser.uid}` : null;
+
+function initNetworkMonitor() {
+  window.addEventListener('online', handleOnline);
+  window.addEventListener('offline', handleOffline);
+  updateNetworkUI(navigator.onLine);
+}
+
+function handleOffline() {
+  isOnline = false;
+  updateNetworkUI(false);
+}
+
+async function handleOnline() {
+  isOnline = true;
+  updateNetworkUI(true);
+  // 오프라인 중 쌓인 로컬 임시저장본을 Firestore에 올림
+  await syncLocalToFirestore();
+}
+
+function updateNetworkUI(online) {
+  const offBanner = document.getElementById('offlineBanner');
+  if (!offBanner) return;
+  if (online) {
+    offBanner.classList.remove('show');
+  } else {
+    offBanner.classList.add('show');
+    setSaveState('offline');
+  }
+}
+
+// LocalStorage 임시저장
+function saveToLocal(data) {
+  const key = LS_KEY();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch(e) {
+    console.warn('LocalStorage 저장 실패:', e);
+  }
+}
+
+function loadFromLocal() {
+  const key = LS_KEY();
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) {
+    return null;
+  }
+}
+
+function clearLocal() {
+  const key = LS_KEY();
+  if (key) localStorage.removeItem(key);
+}
+
+// 온라인 복귀 시 로컬 → Firestore 동기화
+async function syncLocalToFirestore() {
+  if (!currentUser) return;
+  const local = loadFromLocal();
+  if (!local || !local._pendingSync) return;
+
+  setSaveState('saving');
+  try {
+    const { db, doc, setDoc } = fb();
+    delete local._pendingSync;
+    await setDoc(doc(db, 'reports', currentUser.uid), local, { merge: true });
+    clearLocal();
+    setSaveState('saved');
+    // 동기화 완료 배너 표시
+    const syncBanner = document.getElementById('syncBanner');
+    if (syncBanner) {
+      syncBanner.classList.add('show');
+      setTimeout(() => syncBanner.classList.remove('show'), 4000);
+    }
+  } catch(e) {
+    console.error('동기화 실패:', e);
+    setSaveState('offline');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  AUTO-SAVE (온라인: Firestore / 오프라인: LocalStorage)
 // ═══════════════════════════════════════════════════════
 function scheduleAutoSave() {
   setSaveState('saving');
@@ -1708,27 +1853,41 @@ function setSaveState(state) {
   const text = document.getElementById('saveText');
   if (!dot || !text) return;
   dot.className = 'save-dot ' + state;
-  if (state === 'saving') text.textContent = '저장 중...';
-  else if (state === 'saved') text.textContent = '자동 저장됨';
-  else text.textContent = '저장됨';
+  const labels = {
+    saving: '저장 중...',
+    saved: '저장됨 ✓',
+    offline: '오프라인 — 기기에 저장 중',
+    pending: '동기화 대기 중...',
+  };
+  text.textContent = labels[state] || '저장됨';
 }
 
 async function saveFormData() {
   if (!currentUser) return;
-  setSaveState('saving');
   const data = collectFormData();
   data.updatedAt = Date.now();
-
-  // Calculate progress
   data.progress = calculateProgress(data);
 
-  try {
-    const { db, doc, setDoc } = fb();
-    await setDoc(doc(db, 'reports', currentUser.uid), data, { merge: true });
-    setSaveState('saved');
-  } catch(e) {
-    console.error('Save error:', e);
-    setSaveState('');
+  if (isOnline) {
+    // 온라인: Firestore에 직접 저장
+    setSaveState('saving');
+    try {
+      const { db, doc, setDoc } = fb();
+      await setDoc(doc(db, 'reports', currentUser.uid), data, { merge: true });
+      clearLocal(); // 성공 시 로컬 임시본 삭제
+      setSaveState('saved');
+    } catch(e) {
+      // Firestore 실패 시 로컬에 백업
+      console.warn('Firestore 저장 실패, 로컬 백업:', e);
+      data._pendingSync = true;
+      saveToLocal(data);
+      setSaveState('offline');
+    }
+  } else {
+    // 오프라인: LocalStorage에만 저장
+    data._pendingSync = true;
+    saveToLocal(data);
+    setSaveState('offline');
   }
 }
 
@@ -1783,14 +1942,34 @@ function calculateProgress(data) {
 
 async function loadFormData() {
   if (!currentUser) return;
+
+  let serverData = null;
+  let localData = loadFromLocal();
+
+  // Firestore에서 불러오기 시도
   try {
     const { db, doc, getDoc } = fb();
     const snap = await getDoc(doc(db, 'reports', currentUser.uid));
-    if (!snap.exists()) return;
-    const data = snap.data();
-    fillForm(data);
+    if (snap.exists()) serverData = snap.data();
   } catch(e) {
-    console.error('Load error:', e);
+    console.warn('Firestore 불러오기 실패 (오프라인?)', e);
+  }
+
+  // 우선순위: 로컬에 pendingSync가 있으면 로컬 데이터가 더 최신
+  if (localData && localData._pendingSync) {
+    // 로컬 데이터가 더 최신 → 로컬로 화면 복원
+    fillForm(localData);
+    setSaveState('offline');
+    // 온라인이면 즉시 동기화
+    if (isOnline) await syncLocalToFirestore();
+  } else if (serverData) {
+    // 서버 데이터 사용
+    fillForm(serverData);
+    setSaveState('saved');
+  } else if (localData) {
+    // 서버 없고 로컬만 있는 경우
+    fillForm(localData);
+    setSaveState('offline');
   }
 }
 
@@ -1966,21 +2145,42 @@ function pField(label, val) {
 }
 
 // ═══════════════════════════════════════════════════════
-//  DOWNLOAD
+//  DOWNLOAD — 공통 파일명 생성
 // ═══════════════════════════════════════════════════════
+function makeFilename(u, ext) {
+  const studentId = `${u.grade||''}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+  return `탐구계획서_${u.school||''}_${studentId}_${u.name||''}.${ext}`;
+}
+
+// base64 dataURL → Uint8Array (docx ImageRun용)
+function dataUrlToUint8Array(dataUrl) {
+  const base64 = dataUrl.split(',')[1];
+  const binary = atob(base64);
+  const arr = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+  return arr;
+}
+
+// dataURL의 실제 이미지 픽셀 크기 반환 (Promise)
+function getImageSize(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: 300, height: 400 });
+    img.src = dataUrl;
+  });
+}
+
 async function downloadPDF(studentData) {
   showToast('PDF 생성 중... 잠시 기다려주세요 📄');
   const data = studentData || collectFormData();
   const u = studentData?.userInfo || currentUserData || {};
-  const studentId = `${u.grade}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
-  const filename = `탐구보고서_${u.school||''}_${studentId}_${u.name||''}.pdf`;
+  const filename = makeFilename(u, 'pdf');
 
   try {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-    // Use a basic approach for Korean text (base64 font would be ideal but too large)
-    // Instead we render HTML to canvas using html2canvas on the preview area
     await renderPreview();
     const previewEl = document.getElementById('previewArea');
 
@@ -1994,8 +2194,7 @@ async function downloadPDF(studentData) {
     const imgData = canvas.toDataURL('image/jpeg', 0.85);
     const pdfWidth = pdf.internal.pageSize.getWidth();
     const pdfHeight = pdf.internal.pageSize.getHeight();
-    const ratio = canvas.width / canvas.height;
-    const imgHeight = pdfWidth / ratio;
+    const imgHeight = pdfWidth * (canvas.height / canvas.width);
 
     let position = 0;
     let remainingHeight = imgHeight;
@@ -2019,11 +2218,11 @@ async function downloadDOC(studentData) {
   showToast('DOC 파일 생성 중... 📝');
   const data = studentData || collectFormData();
   const u = studentData?.userInfo || currentUserData || {};
-  const studentId = `${u.grade}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
-  const filename = `탐구보고서_${u.school||''}_${studentId}_${u.name||''}.docx`;
+  const studentId = `${u.grade||''}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+  const filename = makeFilename(u, 'docx');
 
   try {
-    const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, Packer } = window.docx;
+    const { Document, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, Packer, WidthType } = window.docx;
 
     const paragraphs = [];
 
@@ -2033,16 +2232,20 @@ async function downloadDOC(studentData) {
     const label = (text) => new Paragraph({ children: [new TextRun({ text, bold: true, size: 22 })], spacing: { before: 200, after: 50 } });
     const divider = () => new Paragraph({ text: '─'.repeat(30), spacing: { after: 200 } });
 
-    // Title
+    // ── 제목
     paragraphs.push(new Paragraph({
-      children: [new TextRun({ text: '주제탐구보고서', bold: true, size: 36 })],
+      children: [new TextRun({ text: '주제탐구 계획서', bold: true, size: 40 })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 100 }
+    }));
+    paragraphs.push(new Paragraph({
+      children: [new TextRun({ text: `${u.school||''}  ${studentId}  ${u.name||''}`, size: 24 })],
       alignment: AlignmentType.CENTER,
       spacing: { after: 200 }
     }));
-    paragraphs.push(body(`학교: ${u.school||''} | 학번: ${studentId} | 이름: ${u.name||''}`));
     paragraphs.push(divider());
 
-    // Page 0
+    // ── 계획서
     paragraphs.push(h1('주제탐구 계획서'));
     paragraphs.push(label('계열')); paragraphs.push(body(data.track));
     paragraphs.push(label('희망학과')); paragraphs.push(body([data.dept1,data.dept2,data.dept3].filter(Boolean).join(' / ')));
@@ -2053,16 +2256,49 @@ async function downloadDOC(studentData) {
     paragraphs.push(label('연계 과목')); paragraphs.push(body(data.subject));
     paragraphs.push(divider());
 
-    // Page 1
+    // ── 도서 (이미지 포함)
     paragraphs.push(h1('2. 도서 찾아서 내용 정리'));
+
+    const imgSrc = data.bookImage || bookImageData || null;
+    if (imgSrc) {
+      try {
+        // 이미지 타입 판별
+        const mimeMatch = imgSrc.match(/^data:(image\/\w+);base64,/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        const typeMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'png' };
+        const imgType = typeMap[mimeType] || 'jpg';
+
+        // 원본 비율 계산 후 Word 삽입 크기 결정 (최대 너비 5cm, 비율 유지)
+        const { width: origW, height: origH } = await getImageSize(imgSrc);
+        const maxWidthEmu = 1800000; // 약 5cm (1cm = 360000 EMU)
+        const ratio = origH / origW;
+        const imgWidthEmu = maxWidthEmu;
+        const imgHeightEmu = Math.round(maxWidthEmu * ratio);
+
+        paragraphs.push(new Paragraph({
+          children: [
+            new ImageRun({
+              data: dataUrlToUint8Array(imgSrc),
+              transformation: { width: Math.round(imgWidthEmu / 9144), height: Math.round(imgHeightEmu / 9144) },
+              type: imgType
+            })
+          ],
+          spacing: { after: 120 }
+        }));
+      } catch(imgErr) {
+        console.warn('DOC 이미지 삽입 실패:', imgErr);
+        paragraphs.push(body('[도서 표지 이미지 — 삽입 오류]'));
+      }
+    }
+
     paragraphs.push(label('도서명')); paragraphs.push(body(data.bookTitle));
     paragraphs.push(label('출판사')); paragraphs.push(body(data.bookPublisher));
-    paragraphs.push(label('출판연도')); paragraphs.push(body(data.bookYear));
+    paragraphs.push(label('출판연도')); paragraphs.push(body(data.bookYear?.toString()));
     paragraphs.push(label('저자')); paragraphs.push(body(data.bookAuthor));
     paragraphs.push(label('내용 및 소개')); paragraphs.push(body(data.bookContent));
     paragraphs.push(divider());
 
-    // Page 2
+    // ── 시사
     paragraphs.push(h1('3. 시사 찾아서 내용 정리'));
     data.news.forEach((n, i) => {
       paragraphs.push(h2(`기사 ${i+1}: ${n.title||'(제목 없음)'}`));
@@ -2072,17 +2308,17 @@ async function downloadDOC(studentData) {
     });
     paragraphs.push(divider());
 
-    // Page 3
+    // ── 논문
     paragraphs.push(h1('4. 논문 찾아서 내용 정리'));
     paragraphs.push(label('논문명')); paragraphs.push(body(data.paperTitle));
     paragraphs.push(label('발행처')); paragraphs.push(body(data.paperPublisher));
-    paragraphs.push(label('발행연도')); paragraphs.push(body(data.paperYear));
+    paragraphs.push(label('발행연도')); paragraphs.push(body(data.paperYear?.toString()));
     paragraphs.push(label('저자')); paragraphs.push(body(data.paperAuthor));
     if (data.paperLink) { paragraphs.push(label('링크')); paragraphs.push(body(data.paperLink)); }
     paragraphs.push(label('초록')); paragraphs.push(body(data.paperAbstract));
     paragraphs.push(divider());
 
-    // Page 4
+    // ── 키워드 & 주제
     paragraphs.push(h1('5. 주제 키워드'));
     data.keywords.filter(k=>k.trim()).forEach((k,i) => paragraphs.push(body(`${i+1}. ${k}`)));
     paragraphs.push(h1('6. 주제 확정'));
@@ -2092,7 +2328,7 @@ async function downloadDOC(studentData) {
     const doc = new Document({ sections: [{ properties: {}, children: paragraphs }] });
     const blob = await Packer.toBlob(doc);
 
-    // File System Access API (Chrome/Android) or fallback
+    // File System Access API (Chrome/Android) → fallback (iOS 등)
     if (window.showSaveFilePicker) {
       try {
         const handle = await window.showSaveFilePicker({
@@ -2104,10 +2340,9 @@ async function downloadDOC(studentData) {
         await writable.close();
         showToast('DOC 저장 완료! ✅');
         return;
-      } catch(e) { /* fallback */ }
+      } catch(e) { /* 취소 또는 미지원 → fallback */ }
     }
 
-    // iOS / fallback
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2210,6 +2445,7 @@ function renderAdminTable(students) {
             <button class="btn-tiny view" onclick="adminViewStudent('${s.id}')">보기</button>
             <button class="btn-tiny pdf" onclick="adminDownloadPDF('${s.id}')">PDF</button>
             <button class="btn-tiny doc" onclick="adminDownloadDOC('${s.id}')">DOC</button>
+            <button class="btn-tiny hwp" onclick="adminDownloadHWPX('${s.id}')">HWP</button>
           </div>
         </td>
       </tr>
@@ -2269,6 +2505,7 @@ function adminViewStudent(uid) {
 
   document.getElementById('adminDlPdf').onclick = () => adminDownloadPDF(uid);
   document.getElementById('adminDlDoc').onclick = () => adminDownloadDOC(uid);
+  document.getElementById('adminDlHwp').onclick = () => adminDownloadHWPX(uid);
   document.getElementById('adminViewModal').classList.add('active');
 }
 
@@ -2283,6 +2520,209 @@ async function adminDownloadDOC(uid) {
   const s = findStudent(uid);
   if (!s) return;
   await downloadDOC(s);
+}
+
+async function adminDownloadHWPX(uid) {
+  const s = findStudent(uid);
+  if (!s) return;
+  await downloadHWPX(s);
+}
+
+// ═══════════════════════════════════════════════════════
+//  HWPX 다운로드 (ZIP 기반 오픈포맷)
+//  브라우저에서 JSZip으로 직접 생성 — 한컴오피스/한글뷰어로 열림
+// ═══════════════════════════════════════════════════════
+async function downloadHWPX(studentData) {
+  showToast('HWPX 파일 생성 중... 잠시 기다려주세요 📃');
+
+  // JSZip 동적 로드
+  if (!window.JSZip) {
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  const data = studentData || collectFormData();
+  const u = studentData?.userInfo || currentUserData || {};
+  const studentId = `${u.grade||''}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+  const filename = makeFilename(u, 'hwpx');
+
+  // ── 텍스트 이스케이프 (XML용)
+  const x = (str) => String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  // ── 문단 XML 생성 헬퍼
+  const para = (text, bold=false, size=1000, indent=0) => {
+    const styleAttr = bold
+      ? `<hp:charShape><hp:height>${size}</hp:height><hp:bold>1</hp:bold></hp:charShape>`
+      : `<hp:charShape><hp:height>=${size}</hp:height></hp:charShape>`;
+    return `<hp:p>
+      <hp:pPr><hp:paraPrDefault><hp:paraPr><hp:indent hLeft="${indent}"/></hp:paraPr></hp:paraPrDefault></hp:pPr>
+      <hp:run>${styleAttr}<hp:t>${x(text)}</hp:t></hp:run>
+    </hp:p>`;
+  };
+
+  const heading = (text, lv=1) => para(text, true, lv===1 ? 1400 : 1200);
+  const label_p = (text) => para(text, true, 1000);
+  const body_p  = (text) => para(text||'(미작성)', false, 1000);
+  const blank   = () => para('');
+  const divider = () => para('─'.repeat(32));
+
+  // ── 이미지 처리: base64 → BinData 삽입
+  const imgSrc = data.bookImage || bookImageData || null;
+  let imgXml = '';
+  let binDataXml = '';
+  let hasBinImg = false;
+
+  if (imgSrc) {
+    try {
+      const b64 = imgSrc.split(',')[1];
+      const mimeMatch = imgSrc.match(/^data:(image\/\w+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      const extMap = { 'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'jpg' };
+      const ext = extMap[mimeType] || 'jpg';
+      const { width: oW, height: oH } = await getImageSize(imgSrc);
+      // HWP 단위: 1mm = 2834.6 hwpunit (약) → 50mm 너비 기준
+      const hwW = Math.round(50 * 2834.6);
+      const hwH = Math.round(50 * 2834.6 * (oH / oW));
+
+      binDataXml = `<hp:binData hp:name="BIN0001" hp:format="${ext}" hp:compress="store">${b64}</hp:binData>`;
+      imgXml = `<hp:p>
+        <hp:run>
+          <hp:charShape><hp:height>1000</hp:height></hp:charShape>
+          <hp:pic>
+            <hp:picInst hp:name="BIN0001" hp:width="${hwW}" hp:height="${hwH}"/>
+          </hp:pic>
+        </hp:run>
+      </hp:p>`;
+      hasBinImg = true;
+    } catch(e) {
+      console.warn('HWPX 이미지 처리 실패:', e);
+    }
+  }
+
+  // ── section0.xml 본문 조립
+  const newsParas = (data.news||[]).map((n,i) => [
+    heading(`기사 ${i+1}`, 2),
+    label_p('제목'), body_p(n.title),
+    label_p('언론사 | 날짜 | 기자'), body_p(`${n.press||''} | ${n.date||''} | ${n.reporter||''}`),
+    label_p('링크'), body_p(n.link),
+    label_p('요약 / 키워드'), body_p(n.summary),
+    blank()
+  ].join('')).join('');
+
+  const kwParas = (data.keywords||[]).filter(k=>k.trim()).map((k,i) => body_p(`${i+1}. ${k}`)).join('');
+
+  const section0 = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<hp:sec xmlns:hp="http://www.hancom.co.kr/hwpml/2012/paragraph" xmlns:hc="http://www.hancom.co.kr/hwpml/2012/core">
+  ${heading('주제탐구 계획서')}
+  ${body_p(`${x(u.school||'')}  ${studentId}  ${x(u.name||'')}`)}
+  ${blank()}${divider()}${blank()}
+
+  ${heading('주제탐구 계획서')}
+  ${label_p('계열')}${body_p(data.track)}
+  ${label_p('희망학과')}${body_p([data.dept1,data.dept2,data.dept3].filter(Boolean).join(' / '))}
+  ${blank()}
+  ${heading('1. 관심분야', 2)}
+  ${label_p('관심분야 키워드')}${body_p(data.keyword)}
+  ${label_p('진로와의 계기')}${body_p(data.motive)}
+  ${label_p('계열 연계')}${body_p(data.trackLink)}
+  ${label_p('연계 과목')}${body_p(data.subject)}
+  ${blank()}${divider()}${blank()}
+
+  ${heading('2. 도서 찾아서 내용 정리')}
+  ${imgXml}
+  ${label_p('도서명')}${body_p(data.bookTitle)}
+  ${label_p('출판사')}${body_p(data.bookPublisher)}
+  ${label_p('출판연도')}${body_p(data.bookYear?.toString())}
+  ${label_p('저자')}${body_p(data.bookAuthor)}
+  ${label_p('내용 및 소개')}${body_p(data.bookContent)}
+  ${blank()}${divider()}${blank()}
+
+  ${heading('3. 시사 찾아서 내용 정리')}
+  ${newsParas}
+  ${divider()}${blank()}
+
+  ${heading('4. 논문 찾아서 내용 정리')}
+  ${label_p('논문명')}${body_p(data.paperTitle)}
+  ${label_p('발행처')}${body_p(data.paperPublisher)}
+  ${label_p('발행연도')}${body_p(data.paperYear?.toString())}
+  ${label_p('저자')}${body_p(data.paperAuthor)}
+  ${label_p('링크')}${body_p(data.paperLink)}
+  ${label_p('초록')}${body_p(data.paperAbstract)}
+  ${blank()}${divider()}${blank()}
+
+  ${heading('5. 주제 키워드')}
+  ${kwParas}
+  ${blank()}
+  ${heading('6. 주제 확정')}
+  ${label_p('의문문 형식')}${body_p(data.topicQ)}
+  ${label_p('보고서 형식')}${body_p(data.topicR)}
+</hp:sec>`;
+
+  // ── header.xml
+  const header = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2012/head">
+  <hh:docInfo>
+    <hh:title>${x(u.name||'')} 탐구계획서</hh:title>
+  </hh:docInfo>
+  <hh:refList>
+    ${hasBinImg ? `<hh:binData>${binDataXml}</hh:binData>` : ''}
+  </hh:refList>
+</hh:head>`;
+
+  // ── settings.xml
+  const settings = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<hs:settings xmlns:hs="http://www.hancom.co.kr/hwpml/2012/settings"/>`;
+
+  // ── manifest
+  const manifest = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">
+  <manifest:file-entry manifest:full-path="/" manifest:media-type="application/hwpml-package+zip"/>
+  <manifest:file-entry manifest:full-path="Contents/section0.xml" manifest:media-type="application/xml"/>
+  <manifest:file-entry manifest:full-path="Contents/header.xml" manifest:media-type="application/xml"/>
+  <manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="application/xml"/>
+</manifest:manifest>`;
+
+  // ── ZIP 패키징 (mimetype 비압축 → 나머지 DEFLATE)
+  try {
+    const zip = new window.JSZip();
+    zip.file('mimetype', 'application/hwpml-package+zip', { compression: 'STORE' });
+    zip.folder('META-INF').file('manifest.xml', manifest);
+    zip.folder('Contents').file('section0.xml', section0);
+    zip.folder('Contents').file('header.xml', header);
+    zip.file('settings.xml', settings);
+
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+
+    // 저장 (File System Access API → fallback)
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{ description: 'HWP 문서 (HWPX)', accept: { 'application/zip': ['.hwpx'] } }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        showToast('HWPX 저장 완료! ✅ 한컴오피스로 여세요.');
+        return;
+      } catch(e) { /* fallback */ }
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    showToast('HWPX 저장 완료! ✅ 한컴오피스로 여세요.');
+  } catch(e) {
+    console.error(e);
+    showToast('HWPX 생성 중 오류가 발생했습니다.');
+  }
 }
 
 // ═══════════════════════════════════════════════════════
