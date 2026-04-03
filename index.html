@@ -1,0 +1,2303 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>탐구보고서 작성 시스템</title>
+
+<!-- Firebase SDK -->
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+  import { getFirestore, doc, setDoc, getDoc, collection, getDocs, query, orderBy, onSnapshot, updateDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+  // ★★★ 여기에 Firebase 설정을 입력하세요 ★★★
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  window.__firebase = { auth, db, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, doc, setDoc, getDoc, collection, getDocs, query, orderBy, onSnapshot, updateDoc };
+</script>
+
+<!-- jsPDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- html2canvas -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<!-- docx -->
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js"></script>
+
+<style>
+  :root {
+    --primary: #1a4a8a;
+    --primary-light: #2563cc;
+    --primary-pale: #e8f0fc;
+    --accent: #0ea5a0;
+    --accent-light: #ccf0ee;
+    --bg: #f5f7fb;
+    --surface: #ffffff;
+    --surface2: #f0f4f9;
+    --text: #1a2233;
+    --text2: #4a5568;
+    --text3: #8a9ab5;
+    --border: #d1dce9;
+    --danger: #e53e3e;
+    --success: #38a169;
+    --warning: #d97706;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 2px 12px rgba(26,74,138,0.08);
+    --shadow-md: 0 4px 24px rgba(26,74,138,0.13);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Noto Sans KR', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  /* ── SCREENS ── */
+  .screen { display: none; min-height: 100vh; }
+  .screen.active { display: flex; flex-direction: column; }
+
+  /* ── LOGIN SCREEN ── */
+  #loginScreen {
+    background: linear-gradient(135deg, #0f2952 0%, #1a4a8a 50%, #0ea5a0 100%);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .login-box {
+    background: white;
+    border-radius: 20px;
+    padding: 40px;
+    width: 100%;
+    max-width: 440px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  }
+
+  .login-logo {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+
+  .login-logo .icon-circle {
+    width: 64px;
+    height: 64px;
+    background: var(--primary-pale);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 12px;
+    font-size: 28px;
+  }
+
+  .login-logo h1 { font-size: 20px; font-weight: 700; color: var(--primary); }
+  .login-logo p { font-size: 13px; color: var(--text3); margin-top: 4px; }
+
+  .tab-switch {
+    display: flex;
+    background: var(--surface2);
+    border-radius: var(--radius-sm);
+    padding: 4px;
+    margin-bottom: 24px;
+  }
+
+  .tab-switch button {
+    flex: 1;
+    padding: 8px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text2);
+    cursor: pointer;
+    transition: all .2s;
+  }
+
+  .tab-switch button.active {
+    background: white;
+    color: var(--primary);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  }
+
+  .form-group { margin-bottom: 14px; }
+  .form-group label { display: block; font-size: 13px; font-weight: 600; color: var(--text2); margin-bottom: 5px; }
+
+  .form-group input, .form-group select {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    color: var(--text);
+    transition: border-color .2s;
+    background: white;
+  }
+
+  .form-group input:focus, .form-group select:focus {
+    outline: none;
+    border-color: var(--primary-light);
+  }
+
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+  .btn-primary {
+    width: 100%;
+    padding: 12px;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s;
+    margin-top: 4px;
+  }
+
+  .btn-primary:hover { background: var(--primary-light); }
+
+  .error-msg {
+    background: #fff5f5;
+    border: 1px solid #fc8181;
+    color: #c53030;
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-size: 13px;
+    margin-bottom: 14px;
+    display: none;
+  }
+
+  /* ── MAIN APP ── */
+  #appScreen { flex-direction: column; }
+
+  /* TOPBAR */
+  .topbar {
+    background: white;
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: var(--shadow);
+  }
+
+  .topbar-left { display: flex; align-items: center; gap: 12px; }
+  .topbar-logo { font-size: 16px; font-weight: 700; color: var(--primary); }
+  .topbar-user { font-size: 13px; color: var(--text2); }
+
+  .topbar-actions { display: flex; gap: 8px; align-items: center; }
+
+  .btn-sm {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1.5px solid var(--border);
+    background: white;
+    color: var(--text2);
+    transition: all .2s;
+  }
+
+  .btn-sm:hover { border-color: var(--primary); color: var(--primary); }
+  .btn-sm.primary { background: var(--primary); color: white; border-color: var(--primary); }
+  .btn-sm.primary:hover { background: var(--primary-light); border-color: var(--primary-light); }
+  .btn-sm.danger { border-color: var(--danger); color: var(--danger); }
+  .btn-sm.danger:hover { background: var(--danger); color: white; }
+
+  /* PAGE NAV */
+  .page-nav {
+    background: white;
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .page-nav::-webkit-scrollbar { display: none; }
+
+  .page-tab {
+    flex-shrink: 0;
+    padding: 14px 16px;
+    font-size: 13px;
+    color: var(--text3);
+    cursor: pointer;
+    border-bottom: 2.5px solid transparent;
+    transition: all .2s;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .page-tab:hover { color: var(--primary); }
+  .page-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 700; }
+
+  /* CONTENT AREA */
+  .content-area {
+    flex: 1;
+    padding: 24px 16px;
+    max-width: 860px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  /* PAGES */
+  .page { display: none; }
+  .page.active { display: block; }
+
+  .page-header {
+    margin-bottom: 24px;
+  }
+
+  .page-header h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .page-header p {
+    font-size: 14px;
+    color: var(--text2);
+    margin-top: 6px;
+  }
+
+  /* CARDS */
+  .card {
+    background: white;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    padding: 24px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+  }
+
+  .card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* FORM ELEMENTS */
+  .field-group { margin-bottom: 16px; }
+  .field-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    margin-bottom: 6px;
+  }
+
+  .field-input, .field-textarea, .field-select {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    color: var(--text);
+    font-family: inherit;
+    transition: border-color .2s;
+    background: white;
+  }
+
+  .field-input:focus, .field-textarea:focus, .field-select:focus {
+    outline: none;
+    border-color: var(--primary-light);
+    box-shadow: 0 0 0 3px rgba(37,99,204,0.08);
+  }
+
+  .field-textarea {
+    resize: vertical;
+    min-height: 120px;
+    line-height: 1.7;
+  }
+
+  .field-textarea.lg { min-height: 200px; }
+
+  .info-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+    align-items: center;
+  }
+
+  .info-badge {
+    background: var(--primary-pale);
+    color: var(--primary);
+    border: 1px solid #c3d8f5;
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .field-row { display: flex; flex-wrap: wrap; gap: 12px; }
+  .field-row .field-group { flex: 1; min-width: 140px; }
+
+  /* PAGE 3 - BOOK */
+  .book-layout {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+
+  @media (max-width: 600px) {
+    .book-layout { grid-template-columns: 1fr; }
+  }
+
+  .book-cover-area {
+    aspect-ratio: 3/4;
+    border: 2px dashed var(--border);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    overflow: hidden;
+    position: relative;
+    background: var(--surface2);
+    transition: border-color .2s;
+    min-height: 220px;
+  }
+
+  .book-cover-area:hover { border-color: var(--primary); }
+  .book-cover-area img { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
+  .book-cover-placeholder { text-align: center; color: var(--text3); font-size: 13px; padding: 16px; }
+  .book-cover-placeholder .icon { font-size: 36px; margin-bottom: 8px; }
+
+  /* PAGE 4 - NEWS */
+  .news-item {
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 18px;
+    margin-bottom: 14px;
+    background: white;
+    position: relative;
+  }
+
+  .news-item-num {
+    position: absolute;
+    top: 14px;
+    left: 18px;
+    width: 26px;
+    height: 26px;
+    background: var(--primary);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .news-item-content { padding-left: 36px; }
+
+  /* PAGE 6 - KEYWORDS */
+  .keyword-list { display: flex; flex-direction: column; gap: 10px; }
+
+  .keyword-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .keyword-num {
+    width: 32px;
+    height: 32px;
+    background: var(--primary-pale);
+    color: var(--primary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .keyword-item input {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text);
+  }
+
+  .keyword-item input:focus {
+    outline: none;
+    border-color: var(--primary-light);
+  }
+
+  .keyword-item button {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: #fee2e2;
+    color: #dc2626;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    flex-shrink: 0;
+    transition: background .2s;
+  }
+
+  .keyword-item button:hover { background: #fecaca; }
+
+  .add-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 16px;
+    border: 1.5px dashed var(--primary-light);
+    border-radius: var(--radius-sm);
+    color: var(--primary);
+    background: transparent;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .2s;
+    margin-top: 4px;
+    font-family: inherit;
+  }
+
+  .add-btn:hover { background: var(--primary-pale); }
+
+  /* SPLIT LAYOUT */
+  .split-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .split-2 { grid-template-columns: 1fr; } }
+
+  /* PAGE NAV BUTTONS */
+  .nav-buttons {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 24px;
+    padding: 16px 0;
+    border-top: 1px solid var(--border);
+    gap: 12px;
+  }
+
+  .btn-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .2s;
+    border: none;
+    font-family: inherit;
+  }
+
+  .btn-nav.prev { background: var(--surface2); color: var(--text2); }
+  .btn-nav.prev:hover { background: var(--border); }
+  .btn-nav.next { background: var(--primary); color: white; margin-left: auto; }
+  .btn-nav.next:hover { background: var(--primary-light); }
+
+  /* AUTO-SAVE INDICATOR */
+  .save-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text3);
+    padding: 6px 12px;
+    border-radius: 20px;
+    background: var(--surface2);
+  }
+
+  .save-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text3);
+    transition: background .3s;
+  }
+
+  .save-dot.saving { background: var(--warning); animation: pulse .6s infinite; }
+  .save-dot.saved { background: var(--success); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* PREVIEW PAGE */
+  .preview-section {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    margin-bottom: 20px;
+  }
+
+  .preview-section h3 {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--primary-pale);
+  }
+
+  .preview-field { margin-bottom: 12px; }
+  .preview-label { font-size: 12px; color: var(--text3); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; }
+  .preview-value { font-size: 14px; color: var(--text); white-space: pre-wrap; }
+
+  .download-area {
+    background: var(--primary-pale);
+    border: 1px solid #c3d8f5;
+    border-radius: var(--radius);
+    padding: 24px;
+    text-align: center;
+    margin-bottom: 24px;
+  }
+
+  .download-area h3 { font-size: 16px; font-weight: 700; color: var(--primary); margin-bottom: 8px; }
+  .download-area p { font-size: 13px; color: var(--text2); margin-bottom: 16px; }
+  .download-btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+  .btn-download {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all .2s;
+    font-family: inherit;
+  }
+
+  .btn-download.pdf { background: #dc2626; color: white; }
+  .btn-download.pdf:hover { background: #b91c1c; }
+  .btn-download.doc { background: #1d4ed8; color: white; }
+  .btn-download.doc:hover { background: #1e40af; }
+
+  /* ADMIN SCREEN */
+  #adminScreen { background: var(--bg); }
+
+  .admin-topbar {
+    background: #0f2952;
+    color: white;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .admin-topbar h1 { font-size: 17px; font-weight: 700; }
+
+  .admin-body { padding: 24px; }
+
+  .admin-filters {
+    background: white;
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    box-shadow: var(--shadow);
+  }
+
+  .admin-filters input, .admin-filters select {
+    padding: 8px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    color: var(--text);
+    font-family: inherit;
+    background: white;
+  }
+
+  .admin-filters input:focus, .admin-filters select:focus {
+    outline: none;
+    border-color: var(--primary-light);
+  }
+
+  .refresh-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--primary-pale);
+    color: var(--primary);
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: auto;
+  }
+
+  .refresh-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    animation: pulse 2s infinite;
+  }
+
+  .admin-table-wrap {
+    background: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+
+  .admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .admin-table th {
+    background: #f8faff;
+    border-bottom: 1.5px solid var(--border);
+    padding: 12px 14px;
+    text-align: left;
+    font-weight: 700;
+    color: var(--text2);
+    white-space: nowrap;
+  }
+
+  .admin-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: middle;
+  }
+
+  .admin-table tr:last-child td { border-bottom: none; }
+  .admin-table tr:hover td { background: var(--primary-pale); }
+
+  .progress-bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 120px;
+  }
+
+  .progress-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 4px;
+    transition: width .5s;
+  }
+
+  .progress-fill.done { background: var(--success); }
+
+  .progress-pct {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text2);
+    min-width: 36px;
+    text-align: right;
+  }
+
+  .admin-dl-btns { display: flex; gap: 6px; }
+
+  .btn-tiny {
+    padding: 4px 10px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all .2s;
+    font-family: inherit;
+  }
+
+  .btn-tiny.pdf { background: #fee2e2; color: #dc2626; }
+  .btn-tiny.pdf:hover { background: #dc2626; color: white; }
+  .btn-tiny.doc { background: #dbeafe; color: #1d4ed8; }
+  .btn-tiny.doc:hover { background: #1d4ed8; color: white; }
+  .btn-tiny.view { background: var(--primary-pale); color: var(--primary); }
+  .btn-tiny.view:hover { background: var(--primary); color: white; }
+
+  /* MODAL */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    display: none;
+  }
+
+  .modal-overlay.active { display: flex; }
+
+  .modal-box {
+    background: white;
+    border-radius: 16px;
+    padding: 28px;
+    width: 100%;
+    max-width: 480px;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.2);
+  }
+
+  .modal-box h2 { font-size: 18px; font-weight: 700; color: var(--primary); margin-bottom: 20px; }
+
+  /* TOAST */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: #1a2233;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 24px;
+    font-size: 14px;
+    font-weight: 500;
+    z-index: 9999;
+    transition: transform .3s ease;
+    white-space: nowrap;
+  }
+
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* Page description */
+  .desc-box {
+    background: var(--accent-light);
+    border: 1px solid #7dd6d3;
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    font-size: 13.5px;
+    color: #0a6a66;
+    margin-bottom: 20px;
+    line-height: 1.7;
+  }
+
+  /* DRAG DROP zone */
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius-sm);
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all .2s;
+    background: var(--surface2);
+    color: var(--text3);
+    font-size: 13px;
+  }
+
+  .drop-zone:hover, .drop-zone.dragover { border-color: var(--primary); background: var(--primary-pale); color: var(--primary); }
+
+  /* link input */
+  .link-input-wrap {
+    position: relative;
+  }
+
+  .link-input-wrap input {
+    padding-left: 36px;
+  }
+
+  .link-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text3);
+    font-size: 14px;
+    pointer-events: none;
+  }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .topbar { padding: 0 12px; }
+    .content-area { padding: 16px 12px; }
+    .card { padding: 16px; }
+    .admin-body { padding: 12px; }
+    .admin-filters { gap: 8px; }
+  }
+
+  /* PRINT */
+  @media print {
+    .topbar, .page-nav, .nav-buttons, .download-area { display: none !important; }
+    .page { display: block !important; }
+    .card { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ LOGIN SCREEN ═══════════════════ -->
+<div id="loginScreen" class="screen active">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="icon-circle">📋</div>
+      <h1>탐구보고서 작성 시스템</h1>
+      <p>학교 탐구보고서 AI 작성 지원 플랫폼</p>
+    </div>
+    <div class="tab-switch">
+      <button class="active" id="loginTabBtn" onclick="switchTab('login')">로그인</button>
+      <button id="registerTabBtn" onclick="switchTab('register')">회원가입</button>
+    </div>
+    <div id="authError" class="error-msg"></div>
+
+    <!-- LOGIN FORM -->
+    <div id="loginForm">
+      <div class="form-group">
+        <label>아이디 (이메일)</label>
+        <input type="email" id="loginEmail" placeholder="example@school.kr">
+      </div>
+      <div class="form-group">
+        <label>패스워드</label>
+        <input type="password" id="loginPw" placeholder="••••••••">
+      </div>
+      <button class="btn-primary" onclick="doLogin()">로그인</button>
+      <div style="text-align:center;margin-top:12px;">
+        <button onclick="doAdminLogin()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;text-decoration:underline;">관리자로 로그인</button>
+      </div>
+    </div>
+
+    <!-- REGISTER FORM -->
+    <div id="registerForm" style="display:none;">
+      <div class="form-group">
+        <label>아이디 (이메일)</label>
+        <input type="email" id="regEmail" placeholder="example@school.kr">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>패스워드</label>
+          <input type="password" id="regPw" placeholder="8자 이상">
+        </div>
+        <div class="form-group">
+          <label>패스워드 확인</label>
+          <input type="password" id="regPw2" placeholder="동일하게 입력">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>학교명</label>
+        <input type="text" id="regSchool" placeholder="○○고등학교">
+      </div>
+      <div class="form-row-3">
+        <div class="form-group">
+          <label>학년</label>
+          <select id="regGrade">
+            <option value="">선택</option>
+            <option>1</option><option>2</option><option>3</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>반</label>
+          <input type="number" id="regClass" placeholder="1" min="1" max="20">
+        </div>
+        <div class="form-group">
+          <label>번호</label>
+          <input type="number" id="regNum" placeholder="1" min="1" max="50">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>이름</label>
+        <input type="text" id="regName" placeholder="홍길동">
+      </div>
+      <button class="btn-primary" onclick="doRegister()">회원가입</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MAIN APP SCREEN ═══════════════════ -->
+<div id="appScreen" class="screen">
+  <!-- Top Bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo">📋 탐구보고서</div>
+      <div class="topbar-user" id="topbarUserInfo"></div>
+    </div>
+    <div class="topbar-actions">
+      <div class="save-indicator" id="saveIndicator">
+        <div class="save-dot" id="saveDot"></div>
+        <span id="saveText">저장됨</span>
+      </div>
+      <button class="btn-sm" onclick="showEditProfile()">내 정보 수정</button>
+      <button class="btn-sm danger" onclick="doLogout()">로그아웃</button>
+    </div>
+  </div>
+
+  <!-- Page Navigation Tabs -->
+  <div class="page-nav" id="pageNav">
+    <div class="page-tab active" onclick="goToPage(0)" data-page="0">🏠 계획서</div>
+    <div class="page-tab" onclick="goToPage(1)" data-page="1">📚 도서</div>
+    <div class="page-tab" onclick="goToPage(2)" data-page="2">📰 시사</div>
+    <div class="page-tab" onclick="goToPage(3)" data-page="3">🔬 논문</div>
+    <div class="page-tab" onclick="goToPage(4)" data-page="4">🔑 키워드·주제</div>
+    <div class="page-tab" onclick="goToPage(5)" data-page="5">👁 최종 확인</div>
+  </div>
+
+  <!-- Content -->
+  <div class="content-area">
+
+    <!-- ── PAGE 0: 주제탐구 계획서 ── -->
+    <div class="page active" id="page0">
+      <div class="page-header">
+        <h2>📋 주제탐구 계획서</h2>
+        <p>기본 정보와 계열, 희망학과를 입력해주세요.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">기본 정보</div>
+        <div class="info-row">
+          <span class="info-badge" id="infoSchool">학교명</span>
+          <span class="info-badge" id="infoStudentId">학번</span>
+          <span class="info-badge" id="infoName">이름</span>
+        </div>
+
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label">계열 선택</label>
+            <select class="field-select" id="f_track" onchange="scheduleAutoSave()">
+              <option value="">선택하세요</option>
+              <option>인문사회계열</option>
+              <option>자연과학계열</option>
+              <option>공학계열</option>
+              <option>의약학계열</option>
+              <option>예체능계열</option>
+              <option>기타</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label class="field-label">희망학과 1순위</label>
+            <input type="text" class="field-input" id="f_dept1" placeholder="예: 컴퓨터공학과" oninput="scheduleAutoSave()">
+          </div>
+          <div class="field-group">
+            <label class="field-label">희망학과 2순위</label>
+            <input type="text" class="field-input" id="f_dept2" placeholder="예: 소프트웨어학과" oninput="scheduleAutoSave()">
+          </div>
+          <div class="field-group">
+            <label class="field-label">희망학과 3순위</label>
+            <input type="text" class="field-input" id="f_dept3" placeholder="예: 정보통신학과" oninput="scheduleAutoSave()">
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">1. 관심분야</div>
+
+        <div class="field-group">
+          <label class="field-label">관심분야 키워드</label>
+          <input type="text" class="field-input" id="f_keyword" placeholder="예: 인공지능, 딥러닝, 자연어처리" oninput="scheduleAutoSave()">
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">관심분야와 진로와의 계기 찾아 정리하기</label>
+          <textarea class="field-textarea" id="f_motive" placeholder="내가 이 분야에 관심을 갖게 된 계기, 진로와의 연결점을 서술해 주세요." oninput="scheduleAutoSave()"></textarea>
+        </div>
+
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label">계열 연계</label>
+            <input type="text" class="field-input" id="f_trackLink" placeholder="예: 자연과학계열 연계" oninput="scheduleAutoSave()">
+          </div>
+          <div class="field-group">
+            <label class="field-label">연계 과목</label>
+            <input type="text" class="field-input" id="f_subject" placeholder="예: 수학, 정보, 물리학" oninput="scheduleAutoSave()">
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-buttons">
+        <div></div>
+        <button class="btn-nav next" onclick="goToPage(1)">다음: 도서 정리 →</button>
+      </div>
+    </div>
+
+    <!-- ── PAGE 1: 도서 ── -->
+    <div class="page" id="page1">
+      <div class="page-header">
+        <h2>📚 2. 도서 찾아서 내용 정리</h2>
+        <p>탐구 주제와 관련된 도서를 찾아 정리해주세요.</p>
+      </div>
+
+      <div class="card">
+        <div class="book-layout">
+          <div>
+            <div class="book-cover-area" id="bookCoverArea" onclick="document.getElementById('bookImageInput').click()">
+              <div class="book-cover-placeholder">
+                <div class="icon">📖</div>
+                <div>표지 이미지를 클릭하여 업로드하거나<br>여기에 붙여넣기 (Ctrl+V)</div>
+              </div>
+            </div>
+            <input type="file" id="bookImageInput" accept="image/*" style="display:none" onchange="handleBookImage(event)">
+            <div style="margin-top:8px;">
+              <div class="drop-zone" id="bookDropZone">이미지 드래그&드롭 또는 클릭</div>
+            </div>
+          </div>
+          <div>
+            <div class="field-group">
+              <label class="field-label">도서명</label>
+              <input type="text" class="field-input" id="f_bookTitle" placeholder="도서 제목을 입력해 주세요" oninput="scheduleAutoSave()">
+            </div>
+            <div class="field-row">
+              <div class="field-group">
+                <label class="field-label">출판사명</label>
+                <input type="text" class="field-input" id="f_bookPublisher" placeholder="출판사" oninput="scheduleAutoSave()">
+              </div>
+              <div class="field-group">
+                <label class="field-label">출판연도</label>
+                <input type="number" class="field-input" id="f_bookYear" placeholder="2024" min="1900" max="2099" oninput="scheduleAutoSave()">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">저자명</label>
+              <input type="text" class="field-input" id="f_bookAuthor" placeholder="저자명" oninput="scheduleAutoSave()">
+            </div>
+          </div>
+        </div>
+
+        <div class="field-group" style="margin-top:20px;">
+          <label class="field-label">도서 내용 및 소개</label>
+          <textarea class="field-textarea lg" id="f_bookContent" placeholder="이 책의 주요 내용, 핵심 메시지, 탐구 주제와의 관련성을 상세하게 작성해 주세요." oninput="scheduleAutoSave()"></textarea>
+        </div>
+      </div>
+
+      <div class="nav-buttons">
+        <button class="btn-nav prev" onclick="goToPage(0)">← 이전: 계획서</button>
+        <button class="btn-nav next" onclick="goToPage(2)">다음: 시사 정리 →</button>
+      </div>
+    </div>
+
+    <!-- ── PAGE 2: 시사 ── -->
+    <div class="page" id="page2">
+      <div class="page-header">
+        <h2>📰 3. 시사 찾아서 내용 정리</h2>
+        <p>탐구 주제와 관련된 기사를 5개 찾아 정리해주세요.</p>
+      </div>
+
+      <div id="newsItems"></div>
+
+      <div class="nav-buttons">
+        <button class="btn-nav prev" onclick="goToPage(1)">← 이전: 도서</button>
+        <button class="btn-nav next" onclick="goToPage(3)">다음: 논문 정리 →</button>
+      </div>
+    </div>
+
+    <!-- ── PAGE 3: 논문 ── -->
+    <div class="page" id="page3">
+      <div class="page-header">
+        <h2>🔬 4. 논문 찾아서 내용 정리</h2>
+        <p>탐구 주제와 관련된 논문을 찾아 정리해주세요.</p>
+      </div>
+
+      <div class="card">
+        <div class="field-group">
+          <label class="field-label">논문명</label>
+          <input type="text" class="field-input" id="f_paperTitle" placeholder="논문 제목을 입력해 주세요" oninput="scheduleAutoSave()">
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label">발행처 / 학술지명</label>
+            <input type="text" class="field-input" id="f_paperPublisher" placeholder="예: 한국정보과학회" oninput="scheduleAutoSave()">
+          </div>
+          <div class="field-group">
+            <label class="field-label">발행연도</label>
+            <input type="number" class="field-input" id="f_paperYear" placeholder="2024" min="1900" max="2099" oninput="scheduleAutoSave()">
+          </div>
+          <div class="field-group">
+            <label class="field-label">저자명</label>
+            <input type="text" class="field-input" id="f_paperAuthor" placeholder="저자명" oninput="scheduleAutoSave()">
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">논문 링크 (URL)</label>
+          <div class="link-input-wrap">
+            <span class="link-icon">🔗</span>
+            <input type="url" class="field-input" id="f_paperLink" placeholder="https://..." oninput="scheduleAutoSave()" style="padding-left:36px">
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">논문 초록 (Abstract)</label>
+          <textarea class="field-textarea lg" id="f_paperAbstract" placeholder="논문의 연구 목적, 방법, 결과, 결론을 포함한 초록을 작성해 주세요." oninput="scheduleAutoSave()"></textarea>
+        </div>
+      </div>
+
+      <div class="nav-buttons">
+        <button class="btn-nav prev" onclick="goToPage(2)">← 이전: 시사</button>
+        <button class="btn-nav next" onclick="goToPage(4)">다음: 키워드 &amp; 주제 →</button>
+      </div>
+    </div>
+
+    <!-- ── PAGE 4: 키워드 & 주제확정 ── -->
+    <div class="page" id="page4">
+      <div class="page-header">
+        <h2>🔑 5. 주제 키워드 찾기 &amp; 6. 주제 확정</h2>
+      </div>
+
+      <div class="card">
+        <div class="card-title">5. 주제 키워드 찾기</div>
+        <div class="desc-box">
+          📌 내가 관심있는 분야, 도서, 시사, 논문을 읽었을 때 <strong>공통되는 또는 핵심이 되는 키워드를 3개 이상</strong> 찾아 작성해주세요. 키워드는 자유롭게 추가할 수 있습니다.
+        </div>
+
+        <div class="keyword-list" id="keywordList"></div>
+        <div style="margin-top:10px;">
+          <button class="add-btn" onclick="addKeyword()">+ 키워드 추가</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">6. 주제 확정</div>
+        <div class="split-2">
+          <div class="field-group">
+            <label class="field-label">의문문으로 작성하기</label>
+            <textarea class="field-textarea lg" id="f_topicQ" placeholder="예: 딥러닝 기반 자연어처리 기술이 교육 현장에서 어떻게 활용될 수 있는가?" oninput="scheduleAutoSave()"></textarea>
+          </div>
+          <div class="field-group">
+            <label class="field-label">보고서 형식으로 작성하기</label>
+            <textarea class="field-textarea lg" id="f_topicR" placeholder="예: 딥러닝 기반 자연어처리 기술의 교육적 활용 방안 연구" oninput="scheduleAutoSave()"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-buttons">
+        <button class="btn-nav prev" onclick="goToPage(3)">← 이전: 논문</button>
+        <button class="btn-nav next" onclick="goToPage(5)">다음: 최종 확인 →</button>
+      </div>
+    </div>
+
+    <!-- ── PAGE 5: 최종 확인 & 다운로드 ── -->
+    <div class="page" id="page5">
+      <div class="page-header">
+        <h2>👁 최종 확인 및 저장</h2>
+        <p>작성한 내용을 확인하고 PDF 또는 DOC 파일로 저장하세요.</p>
+      </div>
+
+      <div class="download-area">
+        <h3>📥 보고서 다운로드</h3>
+        <p>작성한 탐구보고서를 파일로 저장합니다. Android/iOS 모두 지원됩니다.</p>
+        <div class="download-btns">
+          <button class="btn-download pdf" onclick="downloadPDF()">📄 PDF로 저장</button>
+          <button class="btn-download doc" onclick="downloadDOC()">📝 DOC로 저장</button>
+        </div>
+      </div>
+
+      <div id="previewArea"></div>
+
+      <div class="nav-buttons">
+        <button class="btn-nav prev" onclick="goToPage(4)">← 이전: 키워드 &amp; 주제</button>
+        <div></div>
+      </div>
+    </div>
+
+  </div><!-- /content-area -->
+</div><!-- /appScreen -->
+
+<!-- ═══════════════════ ADMIN SCREEN ═══════════════════ -->
+<div id="adminScreen" class="screen">
+  <div class="admin-topbar">
+    <h1>🛡 관리자 대시보드 — 탐구보고서 시스템</h1>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <div class="refresh-badge">
+        <div class="refresh-dot"></div>
+        실시간 연결
+      </div>
+      <button class="btn-sm" onclick="doLogout()" style="background:rgba(255,255,255,0.15);border-color:rgba(255,255,255,0.3);color:white;">로그아웃</button>
+    </div>
+  </div>
+
+  <div class="admin-body">
+    <div class="admin-filters">
+      <input type="text" id="filterSchool" placeholder="학교명 검색" oninput="filterTable()">
+      <select id="filterGrade" onchange="filterTable()">
+        <option value="">전체 학년</option>
+        <option>1</option><option>2</option><option>3</option>
+      </select>
+      <select id="filterClass" onchange="filterTable()">
+        <option value="">전체 반</option>
+      </select>
+      <input type="text" id="filterName" placeholder="이름 검색" oninput="filterTable()">
+      <input type="number" id="filterNum" placeholder="번호" min="1" max="50" oninput="filterTable()">
+      <div class="refresh-badge" style="margin-left:auto;">
+        <div class="refresh-dot"></div>
+        실시간 자동 새로고침
+      </div>
+    </div>
+
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>학교</th>
+            <th>학번</th>
+            <th>이름</th>
+            <th>진행률</th>
+            <th>마지막 저장</th>
+            <th>다운로드 / 보기</th>
+          </tr>
+        </thead>
+        <tbody id="adminTableBody">
+          <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3);">데이터를 불러오는 중...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MODALS ═══════════════════ -->
+
+<!-- Edit Profile Modal -->
+<div class="modal-overlay" id="editProfileModal">
+  <div class="modal-box">
+    <h2>내 정보 수정</h2>
+    <div id="editProfileErr" class="error-msg"></div>
+    <div class="form-group">
+      <label>학교명</label>
+      <input type="text" id="epSchool" placeholder="학교명">
+    </div>
+    <div class="form-row-3">
+      <div class="form-group">
+        <label>학년</label>
+        <select id="epGrade">
+          <option value="">선택</option>
+          <option>1</option><option>2</option><option>3</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>반</label>
+        <input type="number" id="epClass" min="1" max="20">
+      </div>
+      <div class="form-group">
+        <label>번호</label>
+        <input type="number" id="epNum" min="1" max="50">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>이름</label>
+      <input type="text" id="epName">
+    </div>
+    <div style="display:flex;gap:10px;margin-top:6px;">
+      <button class="btn-primary" onclick="saveProfile()" style="flex:1;">저장</button>
+      <button onclick="closeModal('editProfileModal')" style="flex:1;padding:12px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer;background:white;font-size:14px;">취소</button>
+    </div>
+  </div>
+</div>
+
+<!-- Admin View Modal -->
+<div class="modal-overlay" id="adminViewModal">
+  <div class="modal-box" style="max-width:700px;">
+    <h2 id="adminViewTitle">학생 보고서 미리보기</h2>
+    <div id="adminViewContent" style="max-height:60vh;overflow-y:auto;"></div>
+    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;">
+      <button class="btn-download pdf" id="adminDlPdf" style="flex:1;" onclick="">PDF 다운로드</button>
+      <button class="btn-download doc" id="adminDlDoc" style="flex:1;" onclick="">DOC 다운로드</button>
+      <button onclick="closeModal('adminViewModal')" style="flex:1;padding:12px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer;background:white;font-size:14px;font-family:inherit;">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════
+const ADMIN_EMAIL = 'admin@school.kr'; // ★ 관리자 이메일 변경
+const TOTAL_PAGES = 6; // page0~page5 (실제 콘텐츠 페이지는 page0~page4 = 5개, preview=6번째)
+
+// ═══════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════
+let currentUser = null;
+let currentUserData = null;
+let currentPage = 0;
+let autoSaveTimer = null;
+let keywords = ['', '', '', '', ''];
+let bookImageData = null;
+let unsubscribeAdmin = null;
+let adminStudentsCache = [];
+let viewingStudentData = null;
+
+// ═══════════════════════════════════════════════════════
+//  FIREBASE HELPERS
+// ═══════════════════════════════════════════════════════
+function fb() { return window.__firebase; }
+
+// ═══════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════
+window.addEventListener('load', () => {
+  // Wait for firebase module
+  const waitFb = setInterval(() => {
+    if (!window.__firebase) return;
+    clearInterval(waitFb);
+    fb().onAuthStateChanged(fb().auth, handleAuthState);
+  }, 100);
+
+  initNewsItems();
+  initKeywords();
+  setupBookDrop();
+});
+
+function handleAuthState(user) {
+  currentUser = user;
+  if (!user) {
+    showScreen('loginScreen');
+    return;
+  }
+  // Load user data from Firestore
+  loadUserData(user.uid).then(data => {
+    currentUserData = data;
+    if (user.email === ADMIN_EMAIL) {
+      showAdminScreen();
+    } else {
+      showAppScreen();
+    }
+  });
+}
+
+async function loadUserData(uid) {
+  const { db, doc, getDoc } = fb();
+  const snap = await getDoc(doc(db, 'users', uid));
+  return snap.exists() ? snap.data() : {};
+}
+
+// ═══════════════════════════════════════════════════════
+//  AUTH
+// ═══════════════════════════════════════════════════════
+function switchTab(tab) {
+  document.getElementById('loginForm').style.display = tab === 'login' ? '' : 'none';
+  document.getElementById('registerForm').style.display = tab === 'register' ? '' : 'none';
+  document.getElementById('loginTabBtn').classList.toggle('active', tab === 'login');
+  document.getElementById('registerTabBtn').classList.toggle('active', tab === 'register');
+  hideAuthError();
+}
+
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const pw = document.getElementById('loginPw').value;
+  if (!email || !pw) { showAuthError('이메일과 패스워드를 입력해주세요.'); return; }
+  try {
+    await fb().signInWithEmailAndPassword(fb().auth, email, pw);
+  } catch(e) {
+    showAuthError(getAuthError(e.code));
+  }
+}
+
+async function doAdminLogin() {
+  const pw = prompt('관리자 패스워드를 입력하세요:');
+  if (!pw) return;
+  try {
+    await fb().signInWithEmailAndPassword(fb().auth, ADMIN_EMAIL, pw);
+  } catch(e) {
+    alert('관리자 로그인 실패: ' + getAuthError(e.code));
+  }
+}
+
+async function doRegister() {
+  const email = document.getElementById('regEmail').value.trim();
+  const pw = document.getElementById('regPw').value;
+  const pw2 = document.getElementById('regPw2').value;
+  const school = document.getElementById('regSchool').value.trim();
+  const grade = document.getElementById('regGrade').value;
+  const cls = document.getElementById('regClass').value.trim();
+  const num = document.getElementById('regNum').value.trim();
+  const name = document.getElementById('regName').value.trim();
+
+  if (!email || !pw || !school || !grade || !cls || !num || !name) {
+    showAuthError('모든 항목을 입력해주세요.'); return;
+  }
+  if (pw !== pw2) { showAuthError('패스워드가 일치하지 않습니다.'); return; }
+  if (pw.length < 8) { showAuthError('패스워드는 8자 이상이어야 합니다.'); return; }
+
+  try {
+    const cred = await fb().createUserWithEmailAndPassword(fb().auth, email, pw);
+    const userData = { school, grade, class: cls, number: num, name, email, uid: cred.user.uid, createdAt: Date.now() };
+    const { db, doc, setDoc } = fb();
+    await setDoc(doc(db, 'users', cred.user.uid), userData);
+    currentUserData = userData;
+    showToast('회원가입이 완료되었습니다! 🎉');
+  } catch(e) {
+    showAuthError(getAuthError(e.code));
+  }
+}
+
+async function doLogout() {
+  if (unsubscribeAdmin) { unsubscribeAdmin(); unsubscribeAdmin = null; }
+  await fb().signOut(fb().auth);
+  showScreen('loginScreen');
+  resetForm();
+}
+
+function getAuthError(code) {
+  const map = {
+    'auth/invalid-email': '올바르지 않은 이메일 형식입니다.',
+    'auth/user-not-found': '등록되지 않은 계정입니다.',
+    'auth/wrong-password': '패스워드가 올바르지 않습니다.',
+    'auth/email-already-in-use': '이미 사용 중인 이메일입니다.',
+    'auth/weak-password': '패스워드가 너무 약합니다.',
+    'auth/invalid-credential': '이메일 또는 패스워드가 올바르지 않습니다.',
+  };
+  return map[code] || '오류가 발생했습니다. 다시 시도해주세요.';
+}
+
+function showAuthError(msg) {
+  const el = document.getElementById('authError');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideAuthError() {
+  document.getElementById('authError').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════
+//  SCREENS
+// ═══════════════════════════════════════════════════════
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function showAppScreen() {
+  showScreen('appScreen');
+  updateInfoBadges();
+  loadFormData();
+}
+
+function showAdminScreen() {
+  showScreen('adminScreen');
+  startAdminRealtime();
+}
+
+// ═══════════════════════════════════════════════════════
+//  USER INFO BADGES
+// ═══════════════════════════════════════════════════════
+function updateInfoBadges() {
+  if (!currentUserData) return;
+  const { school, grade, class: cls, number, name } = currentUserData;
+  const studentId = `${grade}${String(cls).padStart(2,'0')}${String(number).padStart(2,'0')}`;
+  document.getElementById('infoSchool').textContent = school || '학교명';
+  document.getElementById('infoStudentId').textContent = studentId;
+  document.getElementById('infoName').textContent = name || '이름';
+  document.getElementById('topbarUserInfo').textContent = `${school} ${studentId} ${name}`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  PAGE NAVIGATION
+// ═══════════════════════════════════════════════════════
+function goToPage(n) {
+  // Save before switching
+  saveFormData();
+
+  currentPage = n;
+  document.querySelectorAll('.page').forEach((p, i) => p.classList.toggle('active', i === n));
+  document.querySelectorAll('.page-tab').forEach((t, i) => t.classList.toggle('active', i === n));
+
+  // Scroll to top
+  window.scrollTo(0, 0);
+
+  // If preview page, render
+  if (n === 5) renderPreview();
+}
+
+// ═══════════════════════════════════════════════════════
+//  NEWS ITEMS (Page 2)
+// ═══════════════════════════════════════════════════════
+function initNewsItems() {
+  const container = document.getElementById('newsItems');
+  container.innerHTML = '';
+  for (let i = 0; i < 5; i++) {
+    container.appendChild(createNewsItem(i));
+  }
+}
+
+function createNewsItem(i) {
+  const div = document.createElement('div');
+  div.className = 'news-item';
+  div.innerHTML = `
+    <div class="news-item-num">${i+1}</div>
+    <div class="news-item-content">
+      <div class="field-row">
+        <div class="field-group" style="flex:2">
+          <label class="field-label">기사 제목</label>
+          <input type="text" class="field-input" id="n${i}_title" placeholder="기사 제목을 입력하세요" oninput="scheduleAutoSave()">
+        </div>
+        <div class="field-group">
+          <label class="field-label">언론사명</label>
+          <input type="text" class="field-input" id="n${i}_press" placeholder="언론사" oninput="scheduleAutoSave()">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field-group">
+          <label class="field-label">게시일자</label>
+          <input type="date" class="field-input" id="n${i}_date" oninput="scheduleAutoSave()">
+        </div>
+        <div class="field-group">
+          <label class="field-label">기자명</label>
+          <input type="text" class="field-input" id="n${i}_reporter" placeholder="기자명" oninput="scheduleAutoSave()">
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">기사 링크</label>
+        <div class="link-input-wrap">
+          <span class="link-icon">🔗</span>
+          <input type="url" class="field-input" id="n${i}_link" placeholder="https://..." oninput="scheduleAutoSave()" style="padding-left:36px">
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">기사 내용 요약 / 키워드</label>
+        <textarea class="field-textarea" id="n${i}_summary" placeholder="기사의 핵심 내용을 요약하거나 주요 키워드를 작성해 주세요." oninput="scheduleAutoSave()"></textarea>
+      </div>
+    </div>
+  `;
+  return div;
+}
+
+// ═══════════════════════════════════════════════════════
+//  KEYWORDS (Page 4)
+// ═══════════════════════════════════════════════════════
+function initKeywords() {
+  renderKeywords();
+}
+
+function renderKeywords() {
+  const list = document.getElementById('keywordList');
+  if (!list) return;
+  list.innerHTML = '';
+  keywords.forEach((kw, i) => {
+    const div = document.createElement('div');
+    div.className = 'keyword-item';
+    div.innerHTML = `
+      <div class="keyword-num">${i+1}</div>
+      <input type="text" placeholder="키워드 입력" value="${escapeHtml(kw)}" oninput="keywords[${i}]=this.value;scheduleAutoSave()">
+      ${keywords.length > 3 ? `<button onclick="removeKeyword(${i})">×</button>` : '<div style="width:32px"></div>'}
+    `;
+    list.appendChild(div);
+  });
+}
+
+function addKeyword() {
+  keywords.push('');
+  renderKeywords();
+}
+
+function removeKeyword(i) {
+  keywords.splice(i, 1);
+  renderKeywords();
+}
+
+// ═══════════════════════════════════════════════════════
+//  BOOK IMAGE
+// ═══════════════════════════════════════════════════════
+function setupBookDrop() {
+  const area = document.getElementById('bookCoverArea');
+  const drop = document.getElementById('bookDropZone');
+  if (!area || !drop) return;
+
+  // Paste
+  document.addEventListener('paste', (e) => {
+    if (currentPage !== 1) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        loadBookImage(file);
+        break;
+      }
+    }
+  });
+
+  // Drop zone
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('dragover'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    drop.classList.remove('dragover');
+    const file = e.dataTransfer?.files[0];
+    if (file?.type.startsWith('image/')) loadBookImage(file);
+  });
+  drop.addEventListener('click', () => document.getElementById('bookImageInput').click());
+}
+
+function handleBookImage(e) {
+  const file = e.target.files[0];
+  if (file) loadBookImage(file);
+}
+
+function loadBookImage(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    bookImageData = e.target.result;
+    showBookCover(bookImageData);
+    scheduleAutoSave();
+  };
+  reader.readAsDataURL(file);
+}
+
+function showBookCover(src) {
+  const area = document.getElementById('bookCoverArea');
+  if (!area) return;
+  area.innerHTML = `<img src="${src}" alt="도서 표지">`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  AUTO-SAVE
+// ═══════════════════════════════════════════════════════
+function scheduleAutoSave() {
+  setSaveState('saving');
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(saveFormData, 1500);
+}
+
+function setSaveState(state) {
+  const dot = document.getElementById('saveDot');
+  const text = document.getElementById('saveText');
+  if (!dot || !text) return;
+  dot.className = 'save-dot ' + state;
+  if (state === 'saving') text.textContent = '저장 중...';
+  else if (state === 'saved') text.textContent = '자동 저장됨';
+  else text.textContent = '저장됨';
+}
+
+async function saveFormData() {
+  if (!currentUser) return;
+  setSaveState('saving');
+  const data = collectFormData();
+  data.updatedAt = Date.now();
+
+  // Calculate progress
+  data.progress = calculateProgress(data);
+
+  try {
+    const { db, doc, setDoc } = fb();
+    await setDoc(doc(db, 'reports', currentUser.uid), data, { merge: true });
+    setSaveState('saved');
+  } catch(e) {
+    console.error('Save error:', e);
+    setSaveState('');
+  }
+}
+
+function collectFormData() {
+  const g = (id) => document.getElementById(id)?.value || '';
+  const newsData = [];
+  for (let i = 0; i < 5; i++) {
+    newsData.push({
+      title: g(`n${i}_title`), press: g(`n${i}_press`), date: g(`n${i}_date`),
+      reporter: g(`n${i}_reporter`), link: g(`n${i}_link`), summary: g(`n${i}_summary`)
+    });
+  }
+  return {
+    // page 0
+    track: g('f_track'), dept1: g('f_dept1'), dept2: g('f_dept2'), dept3: g('f_dept3'),
+    keyword: g('f_keyword'), motive: g('f_motive'), trackLink: g('f_trackLink'), subject: g('f_subject'),
+    // page 1
+    bookTitle: g('f_bookTitle'), bookPublisher: g('f_bookPublisher'), bookYear: g('f_bookYear'),
+    bookAuthor: g('f_bookAuthor'), bookContent: g('f_bookContent'), bookImage: bookImageData || '',
+    // page 2
+    news: newsData,
+    // page 3
+    paperTitle: g('f_paperTitle'), paperPublisher: g('f_paperPublisher'), paperYear: g('f_paperYear'),
+    paperAuthor: g('f_paperAuthor'), paperLink: g('f_paperLink'), paperAbstract: g('f_paperAbstract'),
+    // page 4
+    keywords: [...keywords], topicQ: g('f_topicQ'), topicR: g('f_topicR'),
+    // user info
+    userInfo: currentUserData
+  };
+}
+
+function calculateProgress(data) {
+  let filled = 0;
+  let total = 0;
+
+  const check = (val) => { total++; if (val && val.toString().trim()) filled++; };
+
+  // Page 0 (4 fields)
+  check(data.track); check(data.keyword); check(data.motive); check(data.subject);
+  // Page 1 (4 fields)
+  check(data.bookTitle); check(data.bookAuthor); check(data.bookPublisher); check(data.bookContent);
+  // Page 2 (15 fields = 5*3)
+  data.news.forEach(n => { check(n.title); check(n.press); check(n.summary); });
+  // Page 3 (4 fields)
+  check(data.paperTitle); check(data.paperAuthor); check(data.paperAbstract); check(data.paperPublisher);
+  // Page 4 (4 fields)
+  const kwFilled = data.keywords.filter(k => k.trim()).length;
+  check(kwFilled >= 3 ? 'ok' : ''); check(kwFilled >= 3 ? 'ok' : ''); check(data.topicQ); check(data.topicR);
+
+  return Math.round((filled / total) * 100);
+}
+
+async function loadFormData() {
+  if (!currentUser) return;
+  try {
+    const { db, doc, getDoc } = fb();
+    const snap = await getDoc(doc(db, 'reports', currentUser.uid));
+    if (!snap.exists()) return;
+    const data = snap.data();
+    fillForm(data);
+  } catch(e) {
+    console.error('Load error:', e);
+  }
+}
+
+function fillForm(data) {
+  const s = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+
+  s('f_track', data.track); s('f_dept1', data.dept1); s('f_dept2', data.dept2); s('f_dept3', data.dept3);
+  s('f_keyword', data.keyword); s('f_motive', data.motive); s('f_trackLink', data.trackLink); s('f_subject', data.subject);
+
+  s('f_bookTitle', data.bookTitle); s('f_bookPublisher', data.bookPublisher);
+  s('f_bookYear', data.bookYear); s('f_bookAuthor', data.bookAuthor); s('f_bookContent', data.bookContent);
+  if (data.bookImage) { bookImageData = data.bookImage; showBookCover(data.bookImage); }
+
+  if (data.news) {
+    data.news.forEach((n, i) => {
+      s(`n${i}_title`, n.title); s(`n${i}_press`, n.press); s(`n${i}_date`, n.date);
+      s(`n${i}_reporter`, n.reporter); s(`n${i}_link`, n.link); s(`n${i}_summary`, n.summary);
+    });
+  }
+
+  s('f_paperTitle', data.paperTitle); s('f_paperPublisher', data.paperPublisher);
+  s('f_paperYear', data.paperYear); s('f_paperAuthor', data.paperAuthor);
+  s('f_paperLink', data.paperLink); s('f_paperAbstract', data.paperAbstract);
+
+  if (data.keywords && Array.isArray(data.keywords)) {
+    keywords = [...data.keywords];
+    renderKeywords();
+  }
+  s('f_topicQ', data.topicQ); s('f_topicR', data.topicR);
+}
+
+function resetForm() {
+  const fields = ['f_track','f_dept1','f_dept2','f_dept3','f_keyword','f_motive','f_trackLink','f_subject',
+    'f_bookTitle','f_bookPublisher','f_bookYear','f_bookAuthor','f_bookContent',
+    'f_paperTitle','f_paperPublisher','f_paperYear','f_paperAuthor','f_paperLink','f_paperAbstract',
+    'f_topicQ','f_topicR'];
+  fields.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  for (let i = 0; i < 5; i++) {
+    ['title','press','date','reporter','link','summary'].forEach(f => {
+      const el = document.getElementById(`n${i}_${f}`); if (el) el.value = '';
+    });
+  }
+  keywords = ['','','','',''];
+  renderKeywords();
+  bookImageData = null;
+  const area = document.getElementById('bookCoverArea');
+  if (area) area.innerHTML = `<div class="book-cover-placeholder"><div class="icon">📖</div><div>표지 이미지를 클릭하여 업로드하거나<br>여기에 붙여넣기 (Ctrl+V)</div></div>`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  PROFILE EDIT
+// ═══════════════════════════════════════════════════════
+function showEditProfile() {
+  if (!currentUserData) return;
+  document.getElementById('epSchool').value = currentUserData.school || '';
+  document.getElementById('epGrade').value = currentUserData.grade || '';
+  document.getElementById('epClass').value = currentUserData.class || '';
+  document.getElementById('epNum').value = currentUserData.number || '';
+  document.getElementById('epName').value = currentUserData.name || '';
+  document.getElementById('editProfileModal').classList.add('active');
+}
+
+async function saveProfile() {
+  const school = document.getElementById('epSchool').value.trim();
+  const grade = document.getElementById('epGrade').value;
+  const cls = document.getElementById('epClass').value.trim();
+  const num = document.getElementById('epNum').value.trim();
+  const name = document.getElementById('epName').value.trim();
+
+  if (!school || !grade || !cls || !num || !name) {
+    document.getElementById('editProfileErr').textContent = '모든 항목을 입력해주세요.';
+    document.getElementById('editProfileErr').style.display = 'block';
+    return;
+  }
+
+  try {
+    const { db, doc, updateDoc } = fb();
+    await updateDoc(doc(db, 'users', currentUser.uid), { school, grade, class: cls, number: num, name });
+    currentUserData = { ...currentUserData, school, grade, class: cls, number: num, name };
+    updateInfoBadges();
+    closeModal('editProfileModal');
+    showToast('정보가 수정되었습니다. ✅');
+  } catch(e) {
+    document.getElementById('editProfileErr').textContent = '저장 중 오류가 발생했습니다.';
+    document.getElementById('editProfileErr').style.display = 'block';
+  }
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('active');
+}
+
+// ═══════════════════════════════════════════════════════
+//  PREVIEW
+// ═══════════════════════════════════════════════════════
+function renderPreview() {
+  const data = collectFormData();
+  const u = currentUserData || {};
+  const studentId = `${u.grade}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+  const area = document.getElementById('previewArea');
+
+  let html = `
+    <div class="preview-section">
+      <h3>📋 주제탐구 계획서</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <span class="info-badge">${u.school||''}</span>
+        <span class="info-badge">${studentId}</span>
+        <span class="info-badge">${u.name||''}</span>
+      </div>
+      ${pField('계열', data.track)}
+      ${pField('희망학과', [data.dept1,data.dept2,data.dept3].filter(Boolean).join(' / '))}
+      <h4 style="margin:12px 0 6px;font-size:14px;color:var(--primary);">1. 관심분야</h4>
+      ${pField('관심분야 키워드', data.keyword)}
+      ${pField('진로와의 계기', data.motive)}
+      ${pField('계열 연계', data.trackLink)}
+      ${pField('연계 과목', data.subject)}
+    </div>
+
+    <div class="preview-section">
+      <h3>📚 2. 도서 내용 정리</h3>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        ${bookImageData ? `<img src="${bookImageData}" style="width:100px;border-radius:6px;object-fit:cover;" alt="표지">` : ''}
+        <div style="flex:1;min-width:200px;">
+          ${pField('도서명', data.bookTitle)}
+          ${pField('출판사', data.bookPublisher)}
+          ${pField('출판연도', data.bookYear)}
+          ${pField('저자', data.bookAuthor)}
+        </div>
+      </div>
+      ${pField('내용 및 소개', data.bookContent)}
+    </div>
+
+    <div class="preview-section">
+      <h3>📰 3. 시사 내용 정리</h3>
+      ${data.news.map((n,i) => `
+        <div style="margin-bottom:14px;padding:12px;background:var(--surface2);border-radius:8px;">
+          <div style="font-weight:700;color:var(--primary);margin-bottom:6px;">[${i+1}] ${escapeHtml(n.title||'(제목 없음)')}</div>
+          <div style="font-size:13px;color:var(--text2);">${escapeHtml(n.press||'')} | ${escapeHtml(n.date||'')} | 기자: ${escapeHtml(n.reporter||'')}</div>
+          ${n.link ? `<div style="font-size:12px;color:var(--primary-light);word-break:break-all;">${escapeHtml(n.link)}</div>` : ''}
+          <div style="font-size:13px;margin-top:8px;white-space:pre-wrap;">${escapeHtml(n.summary||'')}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="preview-section">
+      <h3>🔬 4. 논문 내용 정리</h3>
+      ${pField('논문명', data.paperTitle)}
+      ${pField('발행처', data.paperPublisher)}
+      ${pField('발행연도', data.paperYear)}
+      ${pField('저자', data.paperAuthor)}
+      ${data.paperLink ? `<div class="preview-field"><div class="preview-label">링크</div><div class="preview-value" style="color:var(--primary-light);word-break:break-all;">${escapeHtml(data.paperLink)}</div></div>` : ''}
+      ${pField('초록', data.paperAbstract)}
+    </div>
+
+    <div class="preview-section">
+      <h3>🔑 5. 주제 키워드</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+        ${data.keywords.filter(k=>k.trim()).map((k,i)=>`<span style="background:var(--primary-pale);color:var(--primary);padding:6px 14px;border-radius:20px;font-size:14px;font-weight:600;">${i+1}. ${escapeHtml(k)}</span>`).join('')}
+      </div>
+      <h3 style="font-size:16px;font-weight:700;color:var(--primary);margin:16px 0 8px;">6. 주제 확정</h3>
+      <div class="split-2">
+        <div>${pField('의문문 형식', data.topicQ)}</div>
+        <div>${pField('보고서 형식', data.topicR)}</div>
+      </div>
+    </div>
+  `;
+  area.innerHTML = html;
+}
+
+function pField(label, val) {
+  if (!val || !val.toString().trim()) return '';
+  return `<div class="preview-field"><div class="preview-label">${label}</div><div class="preview-value">${escapeHtml(val.toString())}</div></div>`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  DOWNLOAD
+// ═══════════════════════════════════════════════════════
+async function downloadPDF(studentData) {
+  showToast('PDF 생성 중... 잠시 기다려주세요 📄');
+  const data = studentData || collectFormData();
+  const u = studentData?.userInfo || currentUserData || {};
+  const studentId = `${u.grade}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+  const filename = `탐구보고서_${u.school||''}_${studentId}_${u.name||''}.pdf`;
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+    // Use a basic approach for Korean text (base64 font would be ideal but too large)
+    // Instead we render HTML to canvas using html2canvas on the preview area
+    await renderPreview();
+    const previewEl = document.getElementById('previewArea');
+
+    const canvas = await html2canvas(previewEl, {
+      scale: 1.5,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff'
+    });
+
+    const imgData = canvas.toDataURL('image/jpeg', 0.85);
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = pdf.internal.pageSize.getHeight();
+    const ratio = canvas.width / canvas.height;
+    const imgHeight = pdfWidth / ratio;
+
+    let position = 0;
+    let remainingHeight = imgHeight;
+
+    while (remainingHeight > 0) {
+      if (position > 0) pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', 0, -position, pdfWidth, imgHeight);
+      position += pdfHeight;
+      remainingHeight -= pdfHeight;
+    }
+
+    pdf.save(filename);
+    showToast('PDF 저장 완료! ✅');
+  } catch(e) {
+    console.error(e);
+    showToast('PDF 생성 중 오류가 발생했습니다.');
+  }
+}
+
+async function downloadDOC(studentData) {
+  showToast('DOC 파일 생성 중... 📝');
+  const data = studentData || collectFormData();
+  const u = studentData?.userInfo || currentUserData || {};
+  const studentId = `${u.grade}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+  const filename = `탐구보고서_${u.school||''}_${studentId}_${u.name||''}.docx`;
+
+  try {
+    const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, Packer } = window.docx;
+
+    const paragraphs = [];
+
+    const h1 = (text) => new Paragraph({ text, heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } });
+    const h2 = (text) => new Paragraph({ text, heading: HeadingLevel.HEADING_2, spacing: { before: 300, after: 100 } });
+    const body = (text) => new Paragraph({ children: [new TextRun({ text: text||'(미작성)', size: 22 })], spacing: { after: 100 } });
+    const label = (text) => new Paragraph({ children: [new TextRun({ text, bold: true, size: 22 })], spacing: { before: 200, after: 50 } });
+    const divider = () => new Paragraph({ text: '─'.repeat(30), spacing: { after: 200 } });
+
+    // Title
+    paragraphs.push(new Paragraph({
+      children: [new TextRun({ text: '주제탐구보고서', bold: true, size: 36 })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 200 }
+    }));
+    paragraphs.push(body(`학교: ${u.school||''} | 학번: ${studentId} | 이름: ${u.name||''}`));
+    paragraphs.push(divider());
+
+    // Page 0
+    paragraphs.push(h1('주제탐구 계획서'));
+    paragraphs.push(label('계열')); paragraphs.push(body(data.track));
+    paragraphs.push(label('희망학과')); paragraphs.push(body([data.dept1,data.dept2,data.dept3].filter(Boolean).join(' / ')));
+    paragraphs.push(h2('1. 관심분야'));
+    paragraphs.push(label('관심분야 키워드')); paragraphs.push(body(data.keyword));
+    paragraphs.push(label('진로와의 계기')); paragraphs.push(body(data.motive));
+    paragraphs.push(label('계열 연계')); paragraphs.push(body(data.trackLink));
+    paragraphs.push(label('연계 과목')); paragraphs.push(body(data.subject));
+    paragraphs.push(divider());
+
+    // Page 1
+    paragraphs.push(h1('2. 도서 찾아서 내용 정리'));
+    paragraphs.push(label('도서명')); paragraphs.push(body(data.bookTitle));
+    paragraphs.push(label('출판사')); paragraphs.push(body(data.bookPublisher));
+    paragraphs.push(label('출판연도')); paragraphs.push(body(data.bookYear));
+    paragraphs.push(label('저자')); paragraphs.push(body(data.bookAuthor));
+    paragraphs.push(label('내용 및 소개')); paragraphs.push(body(data.bookContent));
+    paragraphs.push(divider());
+
+    // Page 2
+    paragraphs.push(h1('3. 시사 찾아서 내용 정리'));
+    data.news.forEach((n, i) => {
+      paragraphs.push(h2(`기사 ${i+1}: ${n.title||'(제목 없음)'}`));
+      paragraphs.push(body(`언론사: ${n.press||''} | 게시일: ${n.date||''} | 기자: ${n.reporter||''}`));
+      if (n.link) { paragraphs.push(label('링크')); paragraphs.push(body(n.link)); }
+      paragraphs.push(label('요약 / 키워드')); paragraphs.push(body(n.summary));
+    });
+    paragraphs.push(divider());
+
+    // Page 3
+    paragraphs.push(h1('4. 논문 찾아서 내용 정리'));
+    paragraphs.push(label('논문명')); paragraphs.push(body(data.paperTitle));
+    paragraphs.push(label('발행처')); paragraphs.push(body(data.paperPublisher));
+    paragraphs.push(label('발행연도')); paragraphs.push(body(data.paperYear));
+    paragraphs.push(label('저자')); paragraphs.push(body(data.paperAuthor));
+    if (data.paperLink) { paragraphs.push(label('링크')); paragraphs.push(body(data.paperLink)); }
+    paragraphs.push(label('초록')); paragraphs.push(body(data.paperAbstract));
+    paragraphs.push(divider());
+
+    // Page 4
+    paragraphs.push(h1('5. 주제 키워드'));
+    data.keywords.filter(k=>k.trim()).forEach((k,i) => paragraphs.push(body(`${i+1}. ${k}`)));
+    paragraphs.push(h1('6. 주제 확정'));
+    paragraphs.push(label('의문문 형식')); paragraphs.push(body(data.topicQ));
+    paragraphs.push(label('보고서 형식')); paragraphs.push(body(data.topicR));
+
+    const doc = new Document({ sections: [{ properties: {}, children: paragraphs }] });
+    const blob = await Packer.toBlob(doc);
+
+    // File System Access API (Chrome/Android) or fallback
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{ description: 'Word Document', accept: { 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'] } }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        showToast('DOC 저장 완료! ✅');
+        return;
+      } catch(e) { /* fallback */ }
+    }
+
+    // iOS / fallback
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    showToast('DOC 저장 완료! ✅');
+  } catch(e) {
+    console.error(e);
+    showToast('DOC 생성 중 오류가 발생했습니다.');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  ADMIN
+// ═══════════════════════════════════════════════════════
+function startAdminRealtime() {
+  const { db, collection, onSnapshot, query, orderBy } = fb();
+  const q = query(collection(db, 'reports'), orderBy('updatedAt', 'desc'));
+
+  unsubscribeAdmin = onSnapshot(q, async (snapshot) => {
+    const reports = [];
+    snapshot.forEach(doc => reports.push({ id: doc.id, ...doc.data() }));
+
+    // Fetch user info for each report
+    const usersSnap = await Promise.all(reports.map(r =>
+      fb().getDoc(fb().doc(db, 'users', r.id)).catch(() => null)
+    ));
+
+    adminStudentsCache = reports.map((r, i) => {
+      const uData = usersSnap[i]?.data() || r.userInfo || {};
+      return { ...r, userInfo: uData };
+    });
+
+    populateClassFilter();
+    filterTable();
+  });
+}
+
+function populateClassFilter() {
+  const classes = [...new Set(adminStudentsCache.map(s => s.userInfo?.class).filter(Boolean))].sort();
+  const sel = document.getElementById('filterClass');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">전체 반</option>';
+  classes.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = `${c}반`; sel.appendChild(o); });
+  sel.value = cur;
+}
+
+function filterTable() {
+  const school = document.getElementById('filterSchool').value.trim().toLowerCase();
+  const grade = document.getElementById('filterGrade').value;
+  const cls = document.getElementById('filterClass').value;
+  const name = document.getElementById('filterName').value.trim();
+  const num = document.getElementById('filterNum').value.trim();
+
+  let filtered = adminStudentsCache.filter(s => {
+    const u = s.userInfo || {};
+    if (school && !(u.school||'').toLowerCase().includes(school)) return false;
+    if (grade && u.grade !== grade) return false;
+    if (cls && u.class !== cls) return false;
+    if (name && !(u.name||'').includes(name)) return false;
+    if (num && u.number !== num) return false;
+    return true;
+  });
+
+  renderAdminTable(filtered);
+}
+
+function renderAdminTable(students) {
+  const tbody = document.getElementById('adminTableBody');
+  if (!students.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3);">검색 결과가 없습니다.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = students.map(s => {
+    const u = s.userInfo || {};
+    const studentId = `${u.grade||''}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+    const pct = s.progress || 0;
+    const done = pct >= 100;
+    const lastSaved = s.updatedAt ? new Date(s.updatedAt).toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) : '-';
+
+    return `
+      <tr>
+        <td>${escapeHtml(u.school||'-')}</td>
+        <td>${studentId||'-'}</td>
+        <td><strong>${escapeHtml(u.name||'-')}</strong></td>
+        <td>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar">
+              <div class="progress-fill ${done?'done':''}" style="width:${pct}%"></div>
+            </div>
+            <span class="progress-pct">${pct}%</span>
+          </div>
+        </td>
+        <td style="font-size:12px;color:var(--text3);">${lastSaved}</td>
+        <td>
+          <div class="admin-dl-btns">
+            <button class="btn-tiny view" onclick="adminViewStudent('${s.id}')">보기</button>
+            <button class="btn-tiny pdf" onclick="adminDownloadPDF('${s.id}')">PDF</button>
+            <button class="btn-tiny doc" onclick="adminDownloadDOC('${s.id}')">DOC</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function findStudent(uid) {
+  return adminStudentsCache.find(s => s.id === uid);
+}
+
+function adminViewStudent(uid) {
+  const s = findStudent(uid);
+  if (!s) return;
+  viewingStudentData = s;
+  const u = s.userInfo || {};
+  const studentId = `${u.grade}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+
+  document.getElementById('adminViewTitle').textContent = `${u.school} ${studentId} ${u.name} — 보고서`;
+
+  // Build preview content
+  const content = document.getElementById('adminViewContent');
+  const data = s;
+
+  let html = `
+    <div style="font-size:13px;line-height:1.8;">
+      <div style="background:var(--primary-pale);padding:12px;border-radius:8px;margin-bottom:14px;">
+        <strong>${escapeHtml(u.school||'')} ${studentId} ${escapeHtml(u.name||'')}</strong>
+        | 진행률: <strong>${s.progress||0}%</strong>
+      </div>
+
+      <h4 style="color:var(--primary);margin:12px 0 6px;">📋 주제탐구 계획서</h4>
+      <p><b>계열:</b> ${escapeHtml(data.track||'-')}</p>
+      <p><b>희망학과:</b> ${escapeHtml([data.dept1,data.dept2,data.dept3].filter(Boolean).join(' / ')||'-')}</p>
+      <p><b>관심분야 키워드:</b> ${escapeHtml(data.keyword||'-')}</p>
+      <p><b>진로 계기:</b> ${escapeHtml(data.motive||'-')}</p>
+      <p><b>연계 과목:</b> ${escapeHtml(data.subject||'-')}</p>
+
+      <h4 style="color:var(--primary);margin:14px 0 6px;">📚 도서</h4>
+      <p><b>${escapeHtml(data.bookTitle||'-')}</b> (${escapeHtml(data.bookAuthor||'-')}, ${escapeHtml(data.bookYear?.toString()||'-')})</p>
+      <p>${escapeHtml(data.bookContent||'-')}</p>
+
+      <h4 style="color:var(--primary);margin:14px 0 6px;">📰 시사 기사</h4>
+      ${(data.news||[]).map((n,i)=>`<p><b>${i+1}. ${escapeHtml(n.title||'-')}</b> (${escapeHtml(n.press||'-')}, ${escapeHtml(n.date||'-')})<br>${escapeHtml(n.summary||'-')}</p>`).join('')}
+
+      <h4 style="color:var(--primary);margin:14px 0 6px;">🔬 논문</h4>
+      <p><b>${escapeHtml(data.paperTitle||'-')}</b> (${escapeHtml(data.paperAuthor||'-')}, ${escapeHtml(data.paperYear?.toString()||'-')})</p>
+      <p>${escapeHtml(data.paperAbstract||'-')}</p>
+
+      <h4 style="color:var(--primary);margin:14px 0 6px;">🔑 키워드 & 주제</h4>
+      <p><b>키워드:</b> ${escapeHtml((data.keywords||[]).filter(k=>k.trim()).join(', ')||'-')}</p>
+      <p><b>의문문:</b> ${escapeHtml(data.topicQ||'-')}</p>
+      <p><b>보고서 형식:</b> ${escapeHtml(data.topicR||'-')}</p>
+    </div>
+  `;
+  content.innerHTML = html;
+
+  document.getElementById('adminDlPdf').onclick = () => adminDownloadPDF(uid);
+  document.getElementById('adminDlDoc').onclick = () => adminDownloadDOC(uid);
+  document.getElementById('adminViewModal').classList.add('active');
+}
+
+async function adminDownloadPDF(uid) {
+  const s = findStudent(uid);
+  if (!s) return;
+  // Temporarily set as current form data and render
+  await downloadPDF(s);
+}
+
+async function adminDownloadDOC(uid) {
+  const s = findStudent(uid);
+  if (!s) return;
+  await downloadDOC(s);
+}
+
+// ═══════════════════════════════════════════════════════
+//  UTILITIES
+// ═══════════════════════════════════════════════════════
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
