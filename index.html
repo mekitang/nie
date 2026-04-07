@@ -7,11 +7,10 @@
 
 <!-- Firebase SDK -->
 <script type="module">
-  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
-  import { getFirestore, doc, setDoc, getDoc, collection, getDocs, query, orderBy, onSnapshot, updateDoc, enableIndexedDbPersistence } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, deleteUser } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+  import { initializeFirestore, persistentLocalCache, doc, setDoc, getDoc, collection, getDocs, query, orderBy, onSnapshot, updateDoc, deleteDoc, where } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
-  // ★★★ 여기에 Firebase 설정을 입력하세요 ★★★
   const firebaseConfig = {
     apiKey: "AIzaSyBPw9X9qGiOuUWa9cdpYJloPGgUvRmNgew",
     authDomain: "report-ai-2.firebaseapp.com",
@@ -24,18 +23,15 @@
 
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
-  const db = getFirestore(app);
+  let db;
+  try {
+    db = initializeFirestore(app, { localCache: persistentLocalCache() });
+  } catch(e) {
+    const { getFirestore } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
+    db = getFirestore(app);
+  }
 
-  // Firestore 오프라인 캐시 활성화 (IndexedDB 기반)
-  enableIndexedDbPersistence(db).catch(err => {
-    if (err.code === 'failed-precondition') {
-      console.warn('Firestore 오프라인 캐시: 탭이 여러 개 열려 있어 비활성화됨');
-    } else if (err.code === 'unimplemented') {
-      console.warn('Firestore 오프라인 캐시: 이 브라우저에서 지원되지 않음');
-    }
-  });
-
-  window.__firebase = { auth, db, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, doc, setDoc, getDoc, collection, getDocs, query, orderBy, onSnapshot, updateDoc };
+  window.__firebase = { auth, db, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, deleteUser, doc, setDoc, getDoc, collection, getDocs, query, orderBy, onSnapshot, updateDoc, deleteDoc, where };
 </script>
 
 <!-- jsPDF -->
@@ -927,6 +923,309 @@
     .page { display: block !important; }
     .card { break-inside: avoid; }
   }
+
+  /* ── 임시저장 드롭다운 패널 ── */
+  .draft-panel {
+    position: relative;
+    display: inline-block;
+  }
+  .draft-panel-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: white;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    min-width: 300px;
+    z-index: 200;
+  }
+  .draft-panel-dropdown.open { display: block; }
+  .draft-panel-header {
+    padding: 12px 16px;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--primary);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .draft-list { max-height: 260px; overflow-y: auto; }
+  .draft-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--surface2);
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .draft-item:hover { background: var(--surface2); }
+  .draft-item-info { flex: 1; }
+  .draft-item-time { font-size: 12px; color: var(--text2); font-weight: 600; }
+  .draft-item-pct { font-size: 11px; color: var(--text3); margin-top: 2px; }
+  .draft-item-del {
+    background: none;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  .draft-item-del:hover { background: #fff0f0; }
+  .draft-save-btn {
+    margin: 10px 16px;
+    width: calc(100% - 32px);
+    padding: 10px;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    font-family: inherit;
+  }
+  .draft-save-btn:hover { background: var(--primary-light); }
+  .draft-empty { padding: 20px 16px; text-align: center; font-size: 13px; color: var(--text3); }
+
+  /* ── 새 보고서 버튼 ── */
+  .btn-new-report {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s;
+  }
+  .btn-new-report:hover { background: #0891a0; }
+
+  /* ── 최종파일 저장 카드 ── */
+  .final-save-card {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    color: white;
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .final-save-card h3 { font-size: 18px; margin-bottom: 6px; }
+  .final-save-card p { font-size: 13px; opacity: 0.85; margin-bottom: 16px; }
+  .btn-final-save {
+    background: white;
+    color: var(--primary);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 22px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    transition: opacity 0.15s;
+  }
+  .btn-final-save:hover { opacity: 0.9; }
+
+  /* ── 최종파일 목록 ── */
+  .final-list { display: flex; flex-direction: column; gap: 10px; }
+  .final-item {
+    background: white;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .final-item-icon { font-size: 24px; }
+  .final-item-info { flex: 1; }
+  .final-item-title { font-weight: 700; font-size: 14px; color: var(--text); }
+  .final-item-meta { font-size: 12px; color: var(--text3); margin-top: 2px; }
+  .final-item-btns { display: flex; gap: 6px; }
+  .btn-tiny-dl {
+    padding: 5px 10px;
+    border: 1.5px solid var(--border);
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+    background: white;
+    transition: all 0.15s;
+  }
+  .btn-tiny-dl:hover { background: var(--surface2); }
+  .btn-tiny-dl.pdf { color: #e53e3e; border-color: #e53e3e; }
+  .btn-tiny-dl.doc { color: #2563cc; border-color: #2563cc; }
+  .btn-tiny-dl.hwp { color: #059669; border-color: #059669; }
+
+  /* ── 관리자 레이아웃 (사이드바 포함) ── */
+  .admin-layout {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .admin-sidebar {
+    width: 260px;
+    background: #0f2952;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+  .admin-sidebar-header {
+    padding: 20px 16px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+  }
+  .admin-sidebar-header h2 { font-size: 15px; font-weight: 700; }
+  .admin-sidebar-header p { font-size: 11px; opacity: 0.6; margin-top: 2px; }
+  .admin-sidebar-section { padding: 14px 16px 8px; }
+  .admin-sidebar-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    opacity: 0.5;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .admin-menu-item {
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .admin-menu-item:hover { background: rgba(255,255,255,0.08); }
+  .admin-menu-item.active { background: rgba(255,255,255,0.15); font-weight: 700; }
+  .admin-online-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    background: rgba(56,161,105,0.2);
+    color: #68d391;
+    padding: 3px 8px;
+    border-radius: 10px;
+    margin-top: 8px;
+  }
+  .admin-online-dot { width: 6px; height: 6px; background: #68d391; border-radius: 50%; animation: pulse 2s infinite; }
+  .admin-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .admin-topbar-new {
+    background: white;
+    border-bottom: 1.5px solid var(--border);
+    padding: 0 24px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .admin-topbar-title { font-size: 16px; font-weight: 700; color: var(--text); }
+  .admin-content { flex: 1; overflow-y: auto; padding: 20px 24px; }
+
+  /* 현재 로그인중 학생 리스트 */
+  .online-student-list { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }
+  .online-student-item {
+    padding: 7px 10px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.06);
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .online-dot-sm { width: 6px; height: 6px; background: #68d391; border-radius: 50%; flex-shrink: 0; }
+  .refresh-btn-sm {
+    width: 100%;
+    margin-top: 8px;
+    padding: 7px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px;
+    color: white;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s;
+  }
+  .refresh-btn-sm:hover { background: rgba(255,255,255,0.15); }
+
+  /* 관리자 학생 삭제 버튼 */
+  .btn-tiny-del {
+    padding: 4px 8px;
+    background: none;
+    border: 1.5px solid var(--danger);
+    color: var(--danger);
+    border-radius: 5px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+    transition: all 0.15s;
+  }
+  .btn-tiny-del:hover { background: var(--danger); color: white; }
+
+  /* 관리자 패널 탭 */
+  .admin-tab-btns {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 16px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 0;
+  }
+  .admin-tab-btn {
+    padding: 10px 18px;
+    border: none;
+    background: none;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text3);
+    cursor: pointer;
+    font-weight: 600;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.15s;
+  }
+  .admin-tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+  /* 관리자 통계 카드 */
+  .admin-stat-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .admin-stat-card {
+    background: white;
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    border: 1.5px solid var(--border);
+  }
+  .admin-stat-num { font-size: 28px; font-weight: 800; color: var(--primary); }
+  .admin-stat-label { font-size: 12px; color: var(--text3); margin-top: 2px; }
+
+  @media (max-width: 640px) {
+    .admin-sidebar { display: none; }
+    .admin-layout { display: block; }
+    .admin-content { padding: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -1020,6 +1319,19 @@
         <div class="save-dot" id="saveDot"></div>
         <span id="saveText">저장됨</span>
       </div>
+      <!-- 임시저장 패널 -->
+      <div class="draft-panel" id="draftPanel">
+        <button class="btn-sm" onclick="toggleDraftPanel()">📁 임시저장</button>
+        <div class="draft-panel-dropdown" id="draftDropdown">
+          <div class="draft-panel-header">
+            <span>임시저장 목록</span>
+            <span style="font-weight:400;font-size:11px;color:var(--text3);">기기에만 저장됩니다</span>
+          </div>
+          <div class="draft-list" id="draftList"></div>
+          <button class="draft-save-btn" onclick="saveDraftNow()">💾 지금 임시저장</button>
+        </div>
+      </div>
+      <button class="btn-new-report" onclick="startNewReport()">✏️ 새 보고서</button>
       <button class="btn-sm" onclick="showEditProfile()">내 정보 수정</button>
       <button class="btn-sm danger" onclick="doLogout()">로그아웃</button>
     </div>
@@ -1277,12 +1589,28 @@
     <div class="page" id="page5">
       <div class="page-header">
         <h2>👁 최종 확인 및 저장</h2>
-        <p>작성한 내용을 확인하고 PDF 또는 DOC 파일로 저장하세요.</p>
+        <p>작성한 내용을 확인하고 최종 저장하세요.</p>
+      </div>
+
+      <!-- 최종파일 서버 저장 카드 -->
+      <div class="final-save-card">
+        <h3>📤 최종파일 저장</h3>
+        <p>완성된 보고서를 서버에 저장합니다. 저장 후 로그인할 때마다 목록에서 확인하고 다운로드할 수 있습니다.</p>
+        <button class="btn-final-save" onclick="saveFinalReport()">✅ 최종파일로 저장하기</button>
+      </div>
+
+      <!-- 내 저장파일 목록 -->
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+          📂 내 저장파일 목록
+          <button class="btn-sm" onclick="loadFinalReports()" style="font-size:12px;">🔄 새로고침</button>
+        </div>
+        <div id="finalReportList"><div style="text-align:center;padding:20px;color:var(--text3);font-size:13px;">로딩 중...</div></div>
       </div>
 
       <div class="download-area">
-        <h3>📥 보고서 다운로드</h3>
-        <p>작성한 탐구보고서를 파일로 저장합니다. Android/iOS 모두 지원됩니다.</p>
+        <h3>📥 현재 작성 내용 다운로드</h3>
+        <p>현재 작성 중인 내용을 파일로 저장합니다.</p>
         <div class="download-btns">
           <button class="btn-download pdf" onclick="downloadPDF()">📄 PDF로 저장</button>
           <button class="btn-download doc" onclick="downloadDOC()">📝 DOC로 저장</button>
@@ -1303,51 +1631,137 @@
 
 <!-- ═══════════════════ ADMIN SCREEN ═══════════════════ -->
 <div id="adminScreen" class="screen">
-  <div class="admin-topbar">
-    <h1>🛡 관리자 대시보드 — 탐구보고서 시스템</h1>
-    <div style="display:flex;gap:10px;align-items:center;">
-      <div class="refresh-badge">
-        <div class="refresh-dot"></div>
-        실시간 연결
+  <div class="admin-layout">
+    <!-- 사이드바 -->
+    <div class="admin-sidebar">
+      <div class="admin-sidebar-header">
+        <h2>🛡 탐구보고서 관리</h2>
+        <p>관리자 대시보드</p>
+        <div class="admin-online-badge">
+          <div class="admin-online-dot"></div>
+          연결됨
+        </div>
       </div>
-      <button class="btn-sm" onclick="doLogout()" style="background:rgba(255,255,255,0.15);border-color:rgba(255,255,255,0.3);color:white;">로그아웃</button>
-    </div>
-  </div>
 
-  <div class="admin-body">
-    <div class="admin-filters">
-      <input type="text" id="filterSchool" placeholder="학교명 검색" oninput="filterTable()">
-      <select id="filterGrade" onchange="filterTable()">
-        <option value="">전체 학년</option>
-        <option>1</option><option>2</option><option>3</option>
-      </select>
-      <select id="filterClass" onchange="filterTable()">
-        <option value="">전체 반</option>
-      </select>
-      <input type="text" id="filterName" placeholder="이름 검색" oninput="filterTable()">
-      <input type="number" id="filterNum" placeholder="번호" min="1" max="50" oninput="filterTable()">
-      <div class="refresh-badge" style="margin-left:auto;">
-        <div class="refresh-dot"></div>
-        실시간 자동 새로고침
+      <div class="admin-sidebar-section">
+        <div class="admin-sidebar-section-title">메뉴</div>
+        <div class="admin-menu-item active" id="menuStudents" onclick="adminSwitchTab('students')">📋 학생 보고서 관리</div>
+        <div class="admin-menu-item" id="menuAccounts" onclick="adminSwitchTab('accounts')">👤 학생 계정 관리</div>
+      </div>
+
+      <!-- 현재 로그인중 학생 -->
+      <div class="admin-sidebar-section" style="flex:1;">
+        <div class="admin-sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          현재 작성중 학생
+          <span id="onlineCount" style="background:rgba(104,211,145,0.2);color:#68d391;padding:1px 7px;border-radius:8px;font-size:10px;">0명</span>
+        </div>
+        <div class="online-student-list" id="onlineStudentList">
+          <div style="font-size:12px;opacity:0.5;padding:6px;">로딩 중...</div>
+        </div>
+        <button class="refresh-btn-sm" onclick="refreshOnlineStudents()">🔄 수동 새로고침</button>
+      </div>
+
+      <div style="padding:16px;">
+        <button onclick="doLogout()" style="width:100%;padding:10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:white;font-size:13px;cursor:pointer;font-family:inherit;">로그아웃</button>
       </div>
     </div>
 
-    <div class="admin-table-wrap">
-      <table class="admin-table">
-        <thead>
-          <tr>
-            <th>학교</th>
-            <th>학번</th>
-            <th>이름</th>
-            <th>진행률</th>
-            <th>마지막 저장</th>
-            <th>다운로드 / 보기</th>
-          </tr>
-        </thead>
-        <tbody id="adminTableBody">
-          <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3);">데이터를 불러오는 중...</td></tr>
-        </tbody>
-      </table>
+    <!-- 메인 컨텐츠 -->
+    <div class="admin-main">
+      <div class="admin-topbar-new">
+        <div class="admin-topbar-title" id="adminTabTitle">📋 학생 보고서 관리</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button class="btn-sm" onclick="adminRefreshData()" style="font-size:12px;">🔄 새로고침</button>
+        </div>
+      </div>
+
+      <div class="admin-content">
+        <!-- 통계 카드 -->
+        <div class="admin-stat-cards">
+          <div class="admin-stat-card">
+            <div class="admin-stat-num" id="statTotal">0</div>
+            <div class="admin-stat-label">전체 가입 학생</div>
+          </div>
+          <div class="admin-stat-card">
+            <div class="admin-stat-num" id="statWithReport">0</div>
+            <div class="admin-stat-label">보고서 작성중</div>
+          </div>
+          <div class="admin-stat-card">
+            <div class="admin-stat-num" id="statCompleted">0</div>
+            <div class="admin-stat-label">완료 (100%)</div>
+          </div>
+          <div class="admin-stat-card">
+            <div class="admin-stat-num" id="statFinal">0</div>
+            <div class="admin-stat-label">최종파일 저장</div>
+          </div>
+        </div>
+
+        <!-- 탭: 학생 보고서 관리 -->
+        <div id="adminTabStudents">
+          <div class="admin-filters">
+            <input type="text" id="filterSchool" placeholder="학교명 검색" oninput="filterTable()">
+            <select id="filterGrade" onchange="filterTable()">
+              <option value="">전체 학년</option>
+              <option>1</option><option>2</option><option>3</option>
+            </select>
+            <select id="filterClass" onchange="filterTable()">
+              <option value="">전체 반</option>
+            </select>
+            <input type="text" id="filterName" placeholder="이름 검색" oninput="filterTable()">
+            <input type="number" id="filterNum" placeholder="번호" min="1" max="50" oninput="filterTable()">
+          </div>
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>학교</th>
+                  <th>학번</th>
+                  <th>이름</th>
+                  <th>진행률</th>
+                  <th>마지막 저장</th>
+                  <th>다운로드 / 보기</th>
+                </tr>
+              </thead>
+              <tbody id="adminTableBody">
+                <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3);">데이터를 불러오는 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 탭: 학생 계정 관리 -->
+        <div id="adminTabAccounts" style="display:none;">
+          <div class="admin-filters" style="margin-bottom:16px;">
+            <input type="text" id="filterAccSchool" placeholder="학교명 검색" oninput="filterAccountTable()">
+            <select id="filterAccGrade" onchange="filterAccountTable()">
+              <option value="">전체 학년</option>
+              <option>1</option><option>2</option><option>3</option>
+            </select>
+            <select id="filterAccClass" onchange="filterAccountTable()">
+              <option value="">전체 반</option>
+            </select>
+            <input type="text" id="filterAccName" placeholder="이름 검색" oninput="filterAccountTable()">
+          </div>
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>학교</th>
+                  <th>학번</th>
+                  <th>이름</th>
+                  <th>이메일</th>
+                  <th>가입일</th>
+                  <th>계정 관리</th>
+                </tr>
+              </thead>
+              <tbody id="adminAccountTableBody">
+                <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3);">데이터를 불러오는 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
     </div>
   </div>
 </div>
@@ -1412,8 +1826,9 @@
 // ═══════════════════════════════════════════════════════
 //  CONFIG
 // ═══════════════════════════════════════════════════════
-const ADMIN_EMAIL = 'mekitang@kakao.com'; // ★ 관리자 이메일 변경
-const TOTAL_PAGES = 6; // page0~page5 (실제 콘텐츠 페이지는 page0~page4 = 5개, preview=6번째)
+const ADMIN_EMAIL = 'admin@school.kr'; // ★ 관리자 이메일 변경
+const ADMIN_PASSWORD = '5879aprl!!';   // ★ 관리자 전용 비밀번호
+const TOTAL_PAGES = 6;
 
 // ═══════════════════════════════════════════════════════
 //  STATE
@@ -1426,7 +1841,9 @@ let keywords = ['', '', '', '', ''];
 let bookImageData = null;
 let unsubscribeAdmin = null;
 let adminStudentsCache = [];
+let adminUsersCache = [];
 let viewingStudentData = null;
+let draftPanelOpen = false;
 
 // ═══════════════════════════════════════════════════════
 //  FIREBASE HELPERS
@@ -1507,10 +1924,23 @@ async function doAdminLogin() {
   if (!fb()) { alert('시스템 초기화 중입니다. 잠시 후 다시 시도해주세요.'); return; }
   const pw = prompt('관리자 패스워드를 입력하세요:');
   if (!pw) return;
+  if (pw !== ADMIN_PASSWORD) {
+    alert('관리자 패스워드가 올바르지 않습니다.');
+    return;
+  }
   try {
     await fb().signInWithEmailAndPassword(fb().auth, ADMIN_EMAIL, pw);
   } catch(e) {
-    alert('관리자 로그인 실패: ' + getAuthError(e.code, e.message));
+    // Firebase에 관리자 계정이 없으면 생성 시도 후 재로그인
+    if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential') {
+      try {
+        await fb().createUserWithEmailAndPassword(fb().auth, ADMIN_EMAIL, pw);
+      } catch(e2) {
+        alert('관리자 로그인 실패: ' + getAuthError(e2.code, e2.message));
+      }
+    } else {
+      alert('관리자 로그인 실패: ' + getAuthError(e.code, e.message));
+    }
   }
 }
 
@@ -1594,11 +2024,23 @@ function showAppScreen() {
   updateInfoBadges();
   initNetworkMonitor();
   loadFormData();
+  // 드래프트 패널 외부 클릭시 닫기
+  document.addEventListener('click', closeDraftOnOutsideClick, true);
+  // page5 진입시 최종파일 목록 로드
 }
 
 function showAdminScreen() {
   showScreen('adminScreen');
-  startAdminRealtime();
+  loadAdminData();
+  refreshOnlineStudents();
+}
+
+function closeDraftOnOutsideClick(e) {
+  const panel = document.getElementById('draftPanel');
+  if (panel && !panel.contains(e.target)) {
+    document.getElementById('draftDropdown').classList.remove('open');
+    draftPanelOpen = false;
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1629,7 +2071,10 @@ function goToPage(n) {
   window.scrollTo(0, 0);
 
   // If preview page, render
-  if (n === 5) renderPreview();
+  if (n === 5) {
+    renderPreview();
+    loadFinalReports();
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1798,6 +2243,108 @@ function showBookCover(src) {
 // ═══════════════════════════════════════════════════════
 let isOnline = navigator.onLine;
 const LS_KEY = () => currentUser ? `report_draft_${currentUser.uid}` : null;
+const LS_DRAFTS_KEY = () => currentUser ? `report_drafts_${currentUser.uid}` : null;
+
+// ═══════════════════════════════════════════════════════
+//  임시저장 (다중 슬롯, LocalStorage)
+// ═══════════════════════════════════════════════════════
+function toggleDraftPanel() {
+  draftPanelOpen = !draftPanelOpen;
+  const dropdown = document.getElementById('draftDropdown');
+  if (draftPanelOpen) {
+    dropdown.classList.add('open');
+    renderDraftList();
+  } else {
+    dropdown.classList.remove('open');
+  }
+}
+
+function getDrafts() {
+  const key = LS_DRAFTS_KEY();
+  if (!key) return [];
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch(e) { return []; }
+}
+
+function saveDrafts(drafts) {
+  const key = LS_DRAFTS_KEY();
+  if (!key) return;
+  // 최대 10개 유지
+  const trimmed = drafts.slice(-10);
+  try { localStorage.setItem(key, JSON.stringify(trimmed)); } catch(e) {}
+}
+
+function saveDraftNow() {
+  const data = collectFormData();
+  data._savedAt = Date.now();
+  data._progress = calculateProgress(data);
+
+  const drafts = getDrafts();
+  drafts.push({ savedAt: data._savedAt, progress: data._progress, data });
+  saveDrafts(drafts);
+  renderDraftList();
+  showToast('임시저장 완료! 💾');
+}
+
+function renderDraftList() {
+  const container = document.getElementById('draftList');
+  const drafts = getDrafts();
+  if (!drafts.length) {
+    container.innerHTML = '<div class="draft-empty">저장된 임시파일이 없습니다.<br>아래 버튼으로 지금 저장하세요.</div>';
+    return;
+  }
+  // 최신순 정렬
+  const sorted = [...drafts].reverse();
+  container.innerHTML = sorted.map((d, i) => {
+    const realIdx = drafts.length - 1 - i;
+    const dt = new Date(d.savedAt);
+    const timeStr = dt.toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+    return `
+      <div class="draft-item" onclick="loadDraft(${realIdx})">
+        <div class="draft-item-info">
+          <div class="draft-item-time">📄 ${timeStr}</div>
+          <div class="draft-item-pct">진행률 ${d.progress || 0}%</div>
+        </div>
+        <button class="draft-item-del" onclick="deleteDraft(event, ${realIdx})">×</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function loadDraft(idx) {
+  const drafts = getDrafts();
+  if (!drafts[idx]) return;
+  if (!confirm('이 임시저장 파일을 불러오면 현재 작성 내용이 덮어씌워집니다. 계속하시겠습니까?')) return;
+  fillForm(drafts[idx].data);
+  if (drafts[idx].data.bookImage) { bookImageData = drafts[idx].data.bookImage; showBookCover(bookImageData); }
+  document.getElementById('draftDropdown').classList.remove('open');
+  draftPanelOpen = false;
+  goToPage(0);
+  showToast('임시저장 파일을 불러왔습니다! ✅');
+}
+
+function deleteDraft(e, idx) {
+  e.stopPropagation();
+  if (!confirm('이 임시저장 파일을 삭제하시겠습니까?')) return;
+  const drafts = getDrafts();
+  drafts.splice(idx, 1);
+  saveDrafts(drafts);
+  renderDraftList();
+  showToast('임시저장 파일이 삭제되었습니다.');
+}
+
+// ═══════════════════════════════════════════════════════
+//  새 보고서 작성
+// ═══════════════════════════════════════════════════════
+function startNewReport() {
+  if (!confirm('새 보고서를 작성하면 현재 작성 내용이 임시저장됩니다. 계속하시겠습니까?')) return;
+  saveDraftNow();
+  resetForm();
+  goToPage(0);
+  showToast('새 보고서 작성을 시작합니다. ✏️');
+}
 
 function initNetworkMonitor() {
   window.addEventListener('online', handleOnline);
@@ -2113,6 +2660,97 @@ function closeModal(id) {
 }
 
 // ═══════════════════════════════════════════════════════
+//  최종파일 저장 (Firestore finals 컬렉션)
+// ═══════════════════════════════════════════════════════
+async function saveFinalReport() {
+  if (!currentUser) return;
+  if (!confirm('현재 작성 내용을 최종파일로 서버에 저장하시겠습니까?\n저장 후 내 저장파일 목록에 추가됩니다.')) return;
+
+  showToast('최종파일 저장 중... ⏳');
+  const data = collectFormData();
+  const now = Date.now();
+  const u = currentUserData || {};
+  const studentId = `${u.grade||''}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+  const title = data.topicR || data.topicQ || `보고서_${new Date(now).toLocaleDateString('ko-KR')}`;
+
+  const finalData = {
+    ...data,
+    title,
+    savedAt: now,
+    uid: currentUser.uid,
+    userInfo: currentUserData,
+    progress: calculateProgress(data)
+  };
+
+  try {
+    const { db, collection, doc, setDoc } = fb();
+    const ref = doc(collection(db, 'finals'));
+    await setDoc(ref, finalData);
+    showToast('최종파일이 저장되었습니다! 🎉');
+    loadFinalReports();
+  } catch(e) {
+    console.error(e);
+    showToast('저장 중 오류가 발생했습니다.');
+  }
+}
+
+async function loadFinalReports() {
+  if (!currentUser) return;
+  const container = document.getElementById('finalReportList');
+  if (!container) return;
+  container.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text3);font-size:13px;">불러오는 중...</div>';
+
+  try {
+    const { db, collection, query, where, orderBy, getDocs } = fb();
+    const q = query(collection(db, 'finals'), where('uid', '==', currentUser.uid), orderBy('savedAt', 'desc'));
+    const snap = await getDocs(q);
+
+    if (snap.empty) {
+      container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px;">저장된 최종파일이 없습니다.</div>';
+      return;
+    }
+
+    const items = [];
+    snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+
+    container.innerHTML = `<div class="final-list">${items.map(item => {
+      const dt = new Date(item.savedAt).toLocaleString('ko-KR', { year:'2-digit', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+      return `
+        <div class="final-item">
+          <div class="final-item-icon">📄</div>
+          <div class="final-item-info">
+            <div class="final-item-title">${escapeHtml(item.title || '제목 없음')}</div>
+            <div class="final-item-meta">저장일시: ${dt} · 진행률 ${item.progress||0}%</div>
+          </div>
+          <div class="final-item-btns">
+            <button class="btn-tiny-dl pdf" onclick="downloadFinalPDF('${item.id}')">PDF</button>
+            <button class="btn-tiny-dl doc" onclick="downloadFinalDOC('${item.id}')">DOC</button>
+            <button class="btn-tiny-dl hwp" onclick="downloadFinalHWP('${item.id}')">HWP</button>
+          </div>
+        </div>
+      `;
+    }).join('')}</div>`;
+  } catch(e) {
+    console.error(e);
+    container.innerHTML = '<div style="text-align:center;padding:16px;color:var(--danger);font-size:13px;">불러오기 실패. 다시 시도해주세요.</div>';
+  }
+}
+
+// 최종파일 다운로드 헬퍼
+let finalReportsCache = {};
+async function getFinalReport(id) {
+  if (finalReportsCache[id]) return finalReportsCache[id];
+  const { db, doc, getDoc } = fb();
+  const snap = await getDoc(doc(db, 'finals', id));
+  if (!snap.exists()) return null;
+  finalReportsCache[id] = snap.data();
+  return finalReportsCache[id];
+}
+async function downloadFinalPDF(id) { const d = await getFinalReport(id); if(d) await downloadPDF(d); }
+async function downloadFinalDOC(id) { const d = await getFinalReport(id); if(d) await downloadDOC(d); }
+async function downloadFinalHWP(id) { const d = await getFinalReport(id); if(d) await downloadHWPX(d); }
+
+// ═══════════════════════════════════════════════════════
 //  PREVIEW
 // ═══════════════════════════════════════════════════════
 function renderPreview() {
@@ -2410,38 +3048,117 @@ async function downloadDOC(studentData) {
 // ═══════════════════════════════════════════════════════
 //  ADMIN
 // ═══════════════════════════════════════════════════════
-function startAdminRealtime() {
-  const { db, collection, onSnapshot, query, orderBy } = fb();
-  const q = query(collection(db, 'reports'), orderBy('updatedAt', 'desc'));
+function adminSwitchTab(tab) {
+  document.getElementById('adminTabStudents').style.display = tab === 'students' ? '' : 'none';
+  document.getElementById('adminTabAccounts').style.display = tab === 'accounts' ? '' : 'none';
+  document.getElementById('menuStudents').classList.toggle('active', tab === 'students');
+  document.getElementById('menuAccounts').classList.toggle('active', tab === 'accounts');
+  const titles = { students: '📋 학생 보고서 관리', accounts: '👤 학생 계정 관리' };
+  document.getElementById('adminTabTitle').textContent = titles[tab] || '';
+  if (tab === 'accounts') renderAccountTable(adminUsersCache);
+}
 
-  unsubscribeAdmin = onSnapshot(q, (snapshot) => {
-    // reports 문서 안의 userInfo를 그대로 사용 — users 컬렉션 N번 추가 조회 없음
+async function loadAdminData() {
+  try {
+    const { db, collection, getDocs, query, orderBy } = fb();
+    const q = query(collection(db, 'reports'), orderBy('updatedAt', 'desc'));
+    const snap = await getDocs(q);
     adminStudentsCache = [];
-    snapshot.forEach(docSnap => {
-      const d = docSnap.data();
-      adminStudentsCache.push({ id: docSnap.id, ...d, userInfo: d.userInfo || {} });
-    });
+    snap.forEach(d => { adminStudentsCache.push({ id: d.id, ...d.data(), userInfo: d.data().userInfo || {} }); });
     populateClassFilter();
     filterTable();
-  });
+  } catch(e) { console.error('reports 로드 실패:', e); }
+
+  try {
+    const { db, collection, getDocs } = fb();
+    const snap = await getDocs(collection(db, 'users'));
+    adminUsersCache = [];
+    snap.forEach(d => { adminUsersCache.push({ id: d.id, ...d.data() }); });
+    populateAccClassFilter();
+    updateStats();
+  } catch(e) { console.error('users 로드 실패:', e); }
+
+  try {
+    const { db, collection, getDocs } = fb();
+    const snap = await getDocs(collection(db, 'finals'));
+    document.getElementById('statFinal').textContent = snap.size;
+  } catch(e) {}
 }
+
+function updateStats() {
+  const total = adminUsersCache.filter(u => u.email !== ADMIN_EMAIL).length;
+  const withReport = adminStudentsCache.length;
+  const completed = adminStudentsCache.filter(s => (s.progress || 0) >= 100).length;
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statWithReport').textContent = withReport;
+  document.getElementById('statCompleted').textContent = completed;
+}
+
+async function adminRefreshData() {
+  showToast('데이터를 새로고침 중...');
+  await loadAdminData();
+  showToast('새로고침 완료! ✅');
+}
+
+async function refreshOnlineStudents() {
+  const container = document.getElementById('onlineStudentList');
+  const countEl = document.getElementById('onlineCount');
+  if (!container) return;
+  container.innerHTML = '<div style="font-size:12px;opacity:0.5;padding:6px;">불러오는 중...</div>';
+  try {
+    const { db, collection, getDocs, query, orderBy } = fb();
+    const snap = await getDocs(query(collection(db, 'reports'), orderBy('updatedAt', 'desc')));
+    const tenMinAgo = Date.now() - 10 * 60 * 1000;
+    const online = [];
+    snap.forEach(d => {
+      const data = d.data();
+      if ((data.updatedAt || 0) > tenMinAgo && data.userInfo?.email !== ADMIN_EMAIL) {
+        online.push(data.userInfo || {});
+      }
+    });
+    countEl.textContent = online.length + '명';
+    if (!online.length) {
+      container.innerHTML = '<div style="font-size:12px;opacity:0.5;padding:6px;">현재 작성중인 학생 없음</div>';
+      return;
+    }
+    container.innerHTML = online.map(u => {
+      const sid = (u.grade||'') + String(u.class||'').padStart(2,'0') + String(u.number||'').padStart(2,'0');
+      return '<div class="online-student-item"><div class="online-dot-sm"></div><span>' + escapeHtml(u.name||'-') + ' (' + sid + ')</span></div>';
+    }).join('');
+  } catch(e) {
+    container.innerHTML = '<div style="font-size:12px;opacity:0.5;padding:6px;">불러오기 실패</div>';
+    if (countEl) countEl.textContent = '-';
+  }
+}
+
+function startAdminRealtime() { /* 하위호환 */ }
 
 function populateClassFilter() {
   const classes = [...new Set(adminStudentsCache.map(s => s.userInfo?.class).filter(Boolean))].sort();
   const sel = document.getElementById('filterClass');
+  if (!sel) return;
   const cur = sel.value;
   sel.innerHTML = '<option value="">전체 반</option>';
-  classes.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = `${c}반`; sel.appendChild(o); });
+  classes.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c + '반'; sel.appendChild(o); });
+  sel.value = cur;
+}
+
+function populateAccClassFilter() {
+  const classes = [...new Set(adminUsersCache.map(u => u.class).filter(Boolean))].sort();
+  const sel = document.getElementById('filterAccClass');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">전체 반</option>';
+  classes.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c + '반'; sel.appendChild(o); });
   sel.value = cur;
 }
 
 function filterTable() {
-  const school = document.getElementById('filterSchool').value.trim().toLowerCase();
-  const grade = document.getElementById('filterGrade').value;
-  const cls = document.getElementById('filterClass').value;
-  const name = document.getElementById('filterName').value.trim();
-  const num = document.getElementById('filterNum').value.trim();
-
+  const school = (document.getElementById('filterSchool')?.value || '').trim().toLowerCase();
+  const grade = document.getElementById('filterGrade')?.value || '';
+  const cls = document.getElementById('filterClass')?.value || '';
+  const name = (document.getElementById('filterName')?.value || '').trim();
+  const num = (document.getElementById('filterNum')?.value || '').trim();
   let filtered = adminStudentsCache.filter(s => {
     const u = s.userInfo || {};
     if (school && !(u.school||'').toLowerCase().includes(school)) return false;
@@ -2451,8 +3168,23 @@ function filterTable() {
     if (num && u.number !== num) return false;
     return true;
   });
-
   renderAdminTable(filtered);
+}
+
+function filterAccountTable() {
+  const school = (document.getElementById('filterAccSchool')?.value || '').trim().toLowerCase();
+  const grade = document.getElementById('filterAccGrade')?.value || '';
+  const cls = document.getElementById('filterAccClass')?.value || '';
+  const name = (document.getElementById('filterAccName')?.value || '').trim();
+  let filtered = adminUsersCache.filter(u => {
+    if (u.email === ADMIN_EMAIL) return false;
+    if (school && !(u.school||'').toLowerCase().includes(school)) return false;
+    if (grade && u.grade !== grade) return false;
+    if (cls && u.class !== cls) return false;
+    if (name && !(u.name||'').includes(name)) return false;
+    return true;
+  });
+  renderAccountTable(filtered);
 }
 
 function renderAdminTable(students) {
@@ -2461,115 +3193,112 @@ function renderAdminTable(students) {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3);">검색 결과가 없습니다.</td></tr>';
     return;
   }
-
   tbody.innerHTML = students.map(s => {
     const u = s.userInfo || {};
-    const studentId = `${u.grade||''}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
+    const studentId = (u.grade||'') + String(u.class||'').padStart(2,'0') + String(u.number||'').padStart(2,'0');
     const pct = s.progress || 0;
     const done = pct >= 100;
     const lastSaved = s.updatedAt ? new Date(s.updatedAt).toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) : '-';
-
-    return `
-      <tr>
-        <td>${escapeHtml(u.school||'-')}</td>
-        <td>${studentId||'-'}</td>
-        <td><strong>${escapeHtml(u.name||'-')}</strong></td>
-        <td>
-          <div class="progress-bar-wrap">
-            <div class="progress-bar">
-              <div class="progress-fill ${done?'done':''}" style="width:${pct}%"></div>
-            </div>
-            <span class="progress-pct">${pct}%</span>
-          </div>
-        </td>
-        <td style="font-size:12px;color:var(--text3);">${lastSaved}</td>
-        <td>
-          <div class="admin-dl-btns">
-            <button class="btn-tiny view" onclick="adminViewStudent('${s.id}')">보기</button>
-            <button class="btn-tiny pdf" onclick="adminDownloadPDF('${s.id}')">PDF</button>
-            <button class="btn-tiny doc" onclick="adminDownloadDOC('${s.id}')">DOC</button>
-            <button class="btn-tiny hwp" onclick="adminDownloadHWPX('${s.id}')">HWP</button>
-          </div>
-        </td>
-      </tr>
-    `;
+    return '<tr>' +
+      '<td>' + escapeHtml(u.school||'-') + '</td>' +
+      '<td>' + (studentId||'-') + '</td>' +
+      '<td><strong>' + escapeHtml(u.name||'-') + '</strong></td>' +
+      '<td><div class="progress-bar-wrap"><div class="progress-bar"><div class="progress-fill ' + (done?'done':'') + '" style="width:' + pct + '%"></div></div><span class="progress-pct">' + pct + '%</span></div></td>' +
+      '<td style="font-size:12px;color:var(--text3);">' + lastSaved + '</td>' +
+      '<td><div class="admin-dl-btns">' +
+        '<button class="btn-tiny view" onclick="adminViewStudent(\'' + s.id + '\')">보기</button>' +
+        '<button class="btn-tiny pdf" onclick="adminDownloadPDF(\'' + s.id + '\')">PDF</button>' +
+        '<button class="btn-tiny doc" onclick="adminDownloadDOC(\'' + s.id + '\')">DOC</button>' +
+        '<button class="btn-tiny hwp" onclick="adminDownloadHWPX(\'' + s.id + '\')">HWP</button>' +
+      '</div></td>' +
+    '</tr>';
   }).join('');
 }
 
-function findStudent(uid) {
-  return adminStudentsCache.find(s => s.id === uid);
+function renderAccountTable(users) {
+  const tbody = document.getElementById('adminAccountTableBody');
+  if (!tbody) return;
+  const filtered = users.filter(u => u.email !== ADMIN_EMAIL);
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3);">검색 결과가 없습니다.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(u => {
+    const sid = (u.grade||'') + String(u.class||'').padStart(2,'0') + String(u.number||'').padStart(2,'0');
+    const createdAt = u.createdAt ? new Date(u.createdAt).toLocaleDateString('ko-KR') : '-';
+    return '<tr>' +
+      '<td>' + escapeHtml(u.school||'-') + '</td>' +
+      '<td>' + (sid||'-') + '</td>' +
+      '<td><strong>' + escapeHtml(u.name||'-') + '</strong></td>' +
+      '<td style="font-size:12px;color:var(--text3);">' + escapeHtml(u.email||'-') + '</td>' +
+      '<td style="font-size:12px;color:var(--text3);">' + createdAt + '</td>' +
+      '<td><button class="btn-tiny-del" onclick="deleteStudentAccount(\'' + u.id + '\', \'' + escapeHtml(u.name||'') + '\')">🗑 계정삭제</button></td>' +
+    '</tr>';
+  }).join('');
 }
+
+async function deleteStudentAccount(uid, name) {
+  if (!confirm('[' + name + '] 학생의 계정과 보고서 데이터를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
+  showToast('삭제 중...');
+  try {
+    const { db, doc, deleteDoc } = fb();
+    await Promise.all([
+      deleteDoc(doc(db, 'users', uid)).catch(() => {}),
+      deleteDoc(doc(db, 'reports', uid)).catch(() => {})
+    ]);
+    adminUsersCache = adminUsersCache.filter(u => u.id !== uid);
+    adminStudentsCache = adminStudentsCache.filter(s => s.id !== uid);
+    updateStats();
+    filterAccountTable();
+    filterTable();
+    showToast('[' + name + '] 계정이 삭제되었습니다.');
+  } catch(e) {
+    console.error(e);
+    showToast('삭제 중 오류가 발생했습니다.');
+  }
+}
+
+function findStudent(uid) { return adminStudentsCache.find(s => s.id === uid); }
 
 function adminViewStudent(uid) {
   const s = findStudent(uid);
   if (!s) return;
   viewingStudentData = s;
   const u = s.userInfo || {};
-  const studentId = `${u.grade}${String(u.class||'').padStart(2,'0')}${String(u.number||'').padStart(2,'0')}`;
-
-  document.getElementById('adminViewTitle').textContent = `${u.school} ${studentId} ${u.name} — 보고서`;
-
-  // Build preview content
+  const studentId = (u.grade||'') + String(u.class||'').padStart(2,'0') + String(u.number||'').padStart(2,'0');
+  document.getElementById('adminViewTitle').textContent = (u.school||'') + ' ' + studentId + ' ' + (u.name||'') + ' — 보고서';
   const content = document.getElementById('adminViewContent');
   const data = s;
-
-  let html = `
-    <div style="font-size:13px;line-height:1.8;">
-      <div style="background:var(--primary-pale);padding:12px;border-radius:8px;margin-bottom:14px;">
-        <strong>${escapeHtml(u.school||'')} ${studentId} ${escapeHtml(u.name||'')}</strong>
-        | 진행률: <strong>${s.progress||0}%</strong>
-      </div>
-
-      <h4 style="color:var(--primary);margin:12px 0 6px;">📋 주제탐구 계획서</h4>
-      <p><b>계열:</b> ${escapeHtml(data.track||'-')}</p>
-      <p><b>희망학과:</b> ${escapeHtml([data.dept1,data.dept2,data.dept3].filter(Boolean).join(' / ')||'-')}</p>
-      <p><b>관심분야 키워드:</b> ${escapeHtml(data.keyword||'-')}</p>
-      <p><b>진로 계기:</b> ${escapeHtml(data.motive||'-')}</p>
-      <p><b>연계 과목:</b> ${escapeHtml(data.subject||'-')}</p>
-
-      <h4 style="color:var(--primary);margin:14px 0 6px;">📚 도서</h4>
-      <p><b>${escapeHtml(data.bookTitle||'-')}</b> (${escapeHtml(data.bookAuthor||'-')}, ${escapeHtml(data.bookYear?.toString()||'-')})</p>
-      <p>${escapeHtml(data.bookContent||'-')}</p>
-
-      <h4 style="color:var(--primary);margin:14px 0 6px;">📰 시사 기사</h4>
-      ${(data.news||[]).map((n,i)=>`<p><b>${i+1}. ${escapeHtml(n.title||'-')}</b> (${escapeHtml(n.press||'-')}, ${escapeHtml(n.date||'-')})<br>${escapeHtml(n.summary||'-')}</p>`).join('')}
-
-      <h4 style="color:var(--primary);margin:14px 0 6px;">🔬 논문</h4>
-      <p><b>${escapeHtml(data.paperTitle||'-')}</b> (${escapeHtml(data.paperAuthor||'-')}, ${escapeHtml(data.paperYear?.toString()||'-')})</p>
-      <p>${escapeHtml(data.paperAbstract||'-')}</p>
-
-      <h4 style="color:var(--primary);margin:14px 0 6px;">🔑 키워드 & 주제</h4>
-      <p><b>키워드:</b> ${escapeHtml((data.keywords||[]).filter(k=>k.trim()).join(', ')||'-')}</p>
-      <p><b>의문문:</b> ${escapeHtml(data.topicQ||'-')}</p>
-      <p><b>보고서 형식:</b> ${escapeHtml(data.topicR||'-')}</p>
-    </div>
-  `;
-  content.innerHTML = html;
-
+  content.innerHTML = '<div style="font-size:13px;line-height:1.8;">' +
+    '<div style="background:var(--primary-pale);padding:12px;border-radius:8px;margin-bottom:14px;">' +
+      '<strong>' + escapeHtml(u.school||'') + ' ' + studentId + ' ' + escapeHtml(u.name||'') + '</strong> | 진행률: <strong>' + (s.progress||0) + '%</strong>' +
+    '</div>' +
+    '<h4 style="color:var(--primary);margin:12px 0 6px;">📋 계획서</h4>' +
+    '<p><b>계열:</b> ' + escapeHtml(data.track||'-') + '</p>' +
+    '<p><b>희망학과:</b> ' + escapeHtml([data.dept1,data.dept2,data.dept3].filter(Boolean).join(' / ')||'-') + '</p>' +
+    '<p><b>관심분야:</b> ' + escapeHtml(data.keyword||'-') + '</p>' +
+    '<p><b>진로 계기:</b> ' + escapeHtml(data.motive||'-') + '</p>' +
+    '<p><b>연계 과목:</b> ' + escapeHtml(data.subject||'-') + '</p>' +
+    '<h4 style="color:var(--primary);margin:14px 0 6px;">📚 도서</h4>' +
+    '<p><b>' + escapeHtml(data.bookTitle||'-') + '</b> (' + escapeHtml(data.bookAuthor||'-') + ', ' + escapeHtml((data.bookYear||'').toString()) + ')</p>' +
+    '<p>' + escapeHtml(data.bookContent||'-') + '</p>' +
+    '<h4 style="color:var(--primary);margin:14px 0 6px;">📰 시사</h4>' +
+    (data.news||[]).map((n,i) => '<p><b>' + (i+1) + '. ' + escapeHtml(n.title||'-') + '</b> (' + escapeHtml(n.press||'-') + ')<br>' + escapeHtml(n.summary||'-') + '</p>').join('') +
+    '<h4 style="color:var(--primary);margin:14px 0 6px;">🔬 논문</h4>' +
+    '<p><b>' + escapeHtml(data.paperTitle||'-') + '</b></p><p>' + escapeHtml(data.paperAbstract||'-') + '</p>' +
+    '<h4 style="color:var(--primary);margin:14px 0 6px;">🔑 주제</h4>' +
+    '<p><b>키워드:</b> ' + escapeHtml((data.keywords||[]).filter(k=>k.trim()).join(', ')||'-') + '</p>' +
+    '<p><b>보고서 형식:</b> ' + escapeHtml(data.topicR||'-') + '</p>' +
+  '</div>';
   document.getElementById('adminDlPdf').onclick = () => adminDownloadPDF(uid);
   document.getElementById('adminDlDoc').onclick = () => adminDownloadDOC(uid);
   document.getElementById('adminDlHwp').onclick = () => adminDownloadHWPX(uid);
   document.getElementById('adminViewModal').classList.add('active');
 }
 
-async function adminDownloadPDF(uid) {
-  const s = findStudent(uid);
-  if (!s) return;
-  // Temporarily set as current form data and render
-  await downloadPDF(s);
-}
-
-async function adminDownloadDOC(uid) {
-  const s = findStudent(uid);
-  if (!s) return;
-  await downloadDOC(s);
-}
-
-async function adminDownloadHWPX(uid) {
-  const s = findStudent(uid);
-  if (!s) return;
-  await downloadHWPX(s);
-}
+async function adminDownloadPDF(uid) { const s = findStudent(uid); if(s) await downloadPDF(s); }
+async function adminDownloadDOC(uid) { const s = findStudent(uid); if(s) await downloadDOC(s); }
+async function adminDownloadHWPX(uid) { const s = findStudent(uid); if(s) await downloadHWPX(s); }
 
 // ═══════════════════════════════════════════════════════
 //  HWPX 다운로드 (ZIP 기반 오픈포맷)
